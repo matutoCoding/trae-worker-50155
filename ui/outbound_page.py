@@ -5,6 +5,19 @@ from database import outbound as outbound_db
 from database import batch as batch_db
 from database import level as level_db
 from ui.batch_page import DistributionDialog
+import re
+
+
+def _validate_positive_float(value, field_name):
+    value = value.strip()
+    if not value:
+        raise ValueError(f'{field_name}不能为空')
+    if re.search(r'[^\d.]', value) or value.count('.') > 1 or value.startswith('.') or value.endswith('.'):
+        raise ValueError(f'{field_name}只能输入正数，请不要输入中文、空格或特殊字符')
+    num = float(value)
+    if num <= 0:
+        raise ValueError(f'{field_name}必须大于0')
+    return num
 
 
 class OutboundPage(ttk.Frame):
@@ -432,9 +445,11 @@ class OutboundDialog(tk.Toplevel):
             messagebox.showerror('错误', '请选择试剂批次', parent=self)
             return
 
-        quantity = float(self.entries['quantity'].get() or 0)
-        if quantity <= 0:
-            messagebox.showerror('错误', '出库数量必须大于0', parent=self)
+        try:
+            quantity = _validate_positive_float(
+                self.entries['quantity'].get(), '出库数量')
+        except ValueError as e:
+            messagebox.showerror('输入错误', str(e), parent=self)
             return
 
         if quantity > self.selected_batch_data['remaining_quantity']:

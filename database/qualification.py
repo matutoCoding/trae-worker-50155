@@ -135,3 +135,40 @@ def delete_qualification(qual_id):
         add_operation_log('危化品资质', '删除', f'删除资质: {qual["qualification_type"]} - {holder}')
 
     return cursor.rowcount
+
+
+def count_qual_stats():
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute('SELECT status, expiry_date FROM hazardous_qualifications')
+    rows = cursor.fetchall()
+
+    from datetime import date as _date
+    today = _date.today()
+    valid = 0
+    expired = 0
+    soon = 0
+
+    for row in rows:
+        is_expired = False
+        is_soon = False
+        if row['expiry_date']:
+            try:
+                from datetime import datetime as _dt
+                exp = _dt.strptime(row['expiry_date'], '%Y-%m-%d').date()
+                if exp < today:
+                    is_expired = True
+                elif (exp - today).days < 30:
+                    is_soon = True
+            except Exception:
+                pass
+
+        if is_expired or row['status'] == 'expired':
+            expired += 1
+        elif row['status'] == 'valid' and is_soon:
+            soon += 1
+            valid += 1
+        elif row['status'] == 'valid':
+            valid += 1
+
+    return {'valid': valid, 'expired': expired, 'soon': soon, 'total': len(rows)}

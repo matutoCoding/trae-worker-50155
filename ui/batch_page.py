@@ -3,6 +3,19 @@ from tkinter import ttk, messagebox
 from datetime import datetime
 from database import batch as batch_db
 from database import outbound as outbound_db
+import re
+
+
+def _validate_positive_float(value, field_name):
+    value = value.strip()
+    if not value:
+        raise ValueError(f'{field_name}不能为空')
+    if re.search(r'[^\d.]', value) or value.count('.') > 1 or value.startswith('.') or value.endswith('.'):
+        raise ValueError(f'{field_name}只能输入正数，请不要输入中文、空格或特殊字符')
+    num = float(value)
+    if num <= 0:
+        raise ValueError(f'{field_name}必须大于0')
+    return num
 
 
 class BatchPage(ttk.Frame):
@@ -278,13 +291,20 @@ class BatchPage(ttk.Frame):
         self.page_info.config(text=f'共 {self.total} 条记录')
         self.page_label.config(text=f'第 {self.current_page} 页')
 
-        self.stat_total.config(text=str(self.total))
-        hazard_count = sum(1 for r in data if r['is_hazardous'])
-        self.stat_hazard.config(text=str(hazard_count))
-        ok_count = sum(1 for r in data if r['remaining_quantity'] / r['total_quantity'] >= 0.5)
-        self.stat_ok.config(text=str(ok_count))
-        warn_count = sum(1 for r in data if r['remaining_quantity'] / r['total_quantity'] < 0.2)
-        self.stat_warn.config(text=str(warn_count))
+        try:
+            stats = batch_db.count_batch_stats()
+            self.stat_total.config(text=str(stats['total']))
+            self.stat_hazard.config(text=str(stats['hazard']))
+            self.stat_ok.config(text=str(stats['ok']))
+            self.stat_warn.config(text=str(stats['warn']))
+        except Exception:
+            self.stat_total.config(text=str(self.total))
+            hazard_count = sum(1 for r in data if r['is_hazardous'])
+            self.stat_hazard.config(text=str(hazard_count))
+            ok_count = sum(1 for r in data if r['remaining_quantity'] / r['total_quantity'] >= 0.5)
+            self.stat_ok.config(text=str(ok_count))
+            warn_count = sum(1 for r in data if r['remaining_quantity'] / r['total_quantity'] < 0.2)
+            self.stat_warn.config(text=str(warn_count))
 
     def _on_search(self):
         self.current_page = 1
@@ -462,12 +482,33 @@ class BatchDialog(tk.Toplevel):
         self.entries['remark'].insert('1.0', data.get('remark', ''))
 
     def _on_submit(self):
+        reagent_name = self.entries['reagent_name'].get().strip()
+        batch_no = self.entries['batch_no'].get().strip()
+        unit = self.entries['unit'].get().strip()
+
+        if not reagent_name:
+            messagebox.showerror('错误', '请输入试剂名称', parent=self)
+            return
+        if not batch_no:
+            messagebox.showerror('错误', '请输入批号', parent=self)
+            return
+        if not unit:
+            messagebox.showerror('错误', '请输入单位', parent=self)
+            return
+
+        try:
+            total_quantity = _validate_positive_float(
+                self.entries['total_quantity'].get(), '总数量')
+        except ValueError as e:
+            messagebox.showerror('输入错误', str(e), parent=self)
+            return
+
         data = {
-            'reagent_name': self.entries['reagent_name'].get().strip(),
-            'batch_no': self.entries['batch_no'].get().strip(),
+            'reagent_name': reagent_name,
+            'batch_no': batch_no,
             'specification': self.entries['specification'].get().strip() or None,
-            'unit': self.entries['unit'].get().strip(),
-            'total_quantity': float(self.entries['total_quantity'].get() or 0),
+            'unit': unit,
+            'total_quantity': total_quantity,
             'supplier': self.entries['supplier'].get().strip() or None,
             'production_date': self.entries['production_date'].get().strip() or None,
             'expiry_date': self.entries['expiry_date'].get().strip() or None,
@@ -476,19 +517,6 @@ class BatchDialog(tk.Toplevel):
             'hazard_level': self.entries['hazard_level'].get().strip() or None,
             'remark': self.entries['remark'].get('1.0', 'end').strip() or None
         }
-
-        if not data['reagent_name']:
-            messagebox.showerror('错误', '请输入试剂名称', parent=self)
-            return
-        if not data['batch_no']:
-            messagebox.showerror('错误', '请输入批号', parent=self)
-            return
-        if not data['unit']:
-            messagebox.showerror('错误', '请输入单位', parent=self)
-            return
-        if data['total_quantity'] <= 0:
-            messagebox.showerror('错误', '总数量必须大于0', parent=self)
-            return
 
         try:
             if self.mode == 'add':

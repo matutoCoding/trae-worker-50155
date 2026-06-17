@@ -205,8 +205,10 @@ def change_project_level(project_id, new_level_id, carry_over):
     cursor.execute('''
         INSERT INTO level_change_logs (
             project_id, old_level_id, new_level_id,
-            old_quota, new_quota, carry_over_type, carry_over_amount, remark
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            old_quota, new_quota, carry_over_type, carry_over_amount,
+            old_hazardous_quota, new_hazardous_quota, carry_over_hazardous_amount,
+            remark
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         project_id,
         project['level_id'],
@@ -215,7 +217,10 @@ def change_project_level(project_id, new_level_id, carry_over):
         new_quota,
         carry_over_type,
         carry_over_amount,
-        f'按比例结转剩余额度（普通: {carry_over_amount:,.0f}, 危化品: {carry_over_hazardous_amount:,.0f}）' if carry_over else '升降级清零'
+        project['current_hazardous_quota'],
+        new_hazardous_quota,
+        carry_over_hazardous_amount,
+        f'按比例结转（普通: {carry_over_amount:,.0f}, 危化品: {carry_over_hazardous_amount:,.0f}）' if carry_over else '清零重置'
     ))
 
     conn.commit()
@@ -269,7 +274,8 @@ def get_quota_usage(project_id):
         LEFT JOIN project_levels l ON p.level_id = l.id
         WHERE p.id = ?
     ''', (project_id,))
-    project = dict(cursor.fetchone()) if cursor.fetchone() else None
+    row = cursor.fetchone()
+    project = dict(row) if row else None
 
     cursor.execute('''
         SELECT c.*,

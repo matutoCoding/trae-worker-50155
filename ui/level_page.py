@@ -1,6 +1,43 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 from database import level as level_db
+import re
+
+
+def _validate_positive_int(value, field_name):
+    value = value.strip()
+    if not value:
+        raise ValueError(f'{field_name}不能为空')
+    if re.search(r'[^\d]', value):
+        raise ValueError(f'{field_name}只能输入正整数，请不要输入中文、空格或特殊字符')
+    num = int(value)
+    if num <= 0:
+        raise ValueError(f'{field_name}必须大于0')
+    return num
+
+
+def _validate_positive_float(value, field_name):
+    value = value.strip()
+    if not value:
+        raise ValueError(f'{field_name}不能为空')
+    if re.search(r'[^\d.]', value) or value.count('.') > 1 or value.startswith('.') or value.endswith('.'):
+        raise ValueError(f'{field_name}只能输入正数，请不要输入中文、空格或特殊字符')
+    num = float(value)
+    if num <= 0:
+        raise ValueError(f'{field_name}必须大于0')
+    return num
+
+
+def _validate_nonneg_float(value, field_name):
+    value = value.strip()
+    if not value:
+        return 0
+    if re.search(r'[^\d.]', value) or value.count('.') > 1 or value.startswith('.') or value.endswith('.'):
+        raise ValueError(f'{field_name}只能输入非负数，请不要输入中文、空格或特殊字符')
+    num = float(value)
+    if num < 0:
+        raise ValueError(f'{field_name}不能为负数')
+    return num
 
 
 class LevelPage(ttk.Frame):
@@ -348,7 +385,7 @@ class LevelPage(ttk.Frame):
         if not project:
             messagebox.showwarning('提示', '请先选择一个项目组', parent=self)
             return
-        ProjectDetailDialog(self, project)
+        ProjectDetailDialog(self, project['id'])
 
     def _on_change_level(self):
         project = self._get_selected_project()
@@ -460,17 +497,22 @@ class LevelDialog(tk.Toplevel):
     def _on_submit(self):
         data = {
             'level_name': self.entries['level_name'].get().strip(),
-            'level_rank': int(self.entries['level_rank'].get() or 0),
-            'monthly_quota': float(self.entries['monthly_quota'].get() or 0),
-            'hazardous_quota': float(self.entries['hazardous_quota'].get() or 0),
             'description': self.entries['description'].get('1.0', 'end').strip() or None
         }
 
         if not data['level_name']:
             messagebox.showerror('错误', '请输入等级名称', parent=self)
             return
-        if data['level_rank'] <= 0:
-            messagebox.showerror('错误', '级别必须大于0', parent=self)
+
+        try:
+            data['level_rank'] = _validate_positive_int(
+                self.entries['level_rank'].get(), '级别排序')
+            data['monthly_quota'] = _validate_positive_float(
+                self.entries['monthly_quota'].get(), '月度普通额度')
+            data['hazardous_quota'] = _validate_nonneg_float(
+                self.entries['hazardous_quota'].get(), '危化品额度')
+        except ValueError as e:
+            messagebox.showerror('输入错误', str(e), parent=self)
             return
 
         try:
@@ -805,13 +847,13 @@ class LevelChangeDialog(tk.Toplevel):
 
 
 class ProjectDetailDialog(tk.Toplevel):
-    def __init__(self, parent, project):
+    def __init__(self, parent, project_id):
         super().__init__(parent)
         self.parent = parent
-        self.project = project
+        self.project_id = project_id
 
         self.title('项目组详情')
-        self.geometry('520x480')
+        self.geometry('620x540')
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
@@ -821,6 +863,17 @@ class ProjectDetailDialog(tk.Toplevel):
     def _create_widgets(self):
         container = tk.Frame(self, bg='white')
         container.pack(fill='both', expand=True, padx=20, pady=16)
+
+        projects = level_db.list_projects()
+        self.project = None
+        for p in projects:
+            if p['id'] == self.project_id:
+                self.project = p
+                break
+        if not self.project:
+            tk.Label(container, text='项目组不存在', font=('Microsoft YaHei', 12),
+                     bg='white', fg='#f5222d').pack()
+            return
 
         tk.Label(container, text=self.project['group_name'],
                  font=('Microsoft YaHei', 14, 'bold'),
@@ -897,18 +950,20 @@ class ProjectDetailDialog(tk.Toplevel):
         logs_frame = tk.Frame(container, bg='white')
         logs_frame.pack(fill='both', expand=True)
 
-        columns = ['date', 'old_level', 'new_level', 'type']
+        columns = ['date', 'old_level', 'new_level', 'type', 'quota_change']
         log_tree = ttk.Treeview(logs_frame, columns=columns, show='headings', height=6)
 
         log_tree.heading('date', text='时间')
         log_tree.heading('old_level', text='原等级')
         log_tree.heading('new_level', text='新等级')
         log_tree.heading('type', text='结转方式')
+        log_tree.heading('quota_change', text='额度变化')
 
-        log_tree.column('date', width=150, anchor='w')
-        log_tree.column('old_level', width=100, anchor='center')
-        log_tree.column('new_level', width=100, anchor='center')
-        log_tree.column('type', width=100, anchor='center')
+        log_tree.column('date', width=130, anchor='w')
+        log_tree.column('old_level', width=70, anchor='center')
+        log_tree.column('new_level', width=70, anchor='center')
+        log_tree.column('type', width=80, anchor='center')
+        log_tree.column('quota_change', width=200, anchor='w')
 
         vsb = ttk.Scrollbar(logs_frame, orient='vertical', command=log_tree.yview)
         log_tree.configure(yscrollcommand=vsb.set)
@@ -918,11 +973,26 @@ class ProjectDetailDialog(tk.Toplevel):
 
         for log in change_logs:
             type_text = '按比例结转' if log['carry_over_type'] == 'proportional' else '清零重置'
+            parts = []
+            old_q = log.get('old_quota')
+            new_q = log.get('new_quota')
+            if old_q is not None and new_q is not None:
+                diff = new_q - old_q
+                sign = '+' if diff >= 0 else ''
+                parts.append(f"普通 ¥{old_q:,.0f}→¥{new_q:,.0f}({sign}¥{diff:,.0f})")
+            old_hq = log.get('old_hazardous_quota')
+            new_hq = log.get('new_hazardous_quota')
+            if old_hq is not None and new_hq is not None:
+                hdiff = new_hq - old_hq
+                hsign = '+' if hdiff >= 0 else ''
+                parts.append(f"危化 ¥{old_hq:,.0f}→¥{new_hq:,.0f}({hsign}¥{hdiff:,.0f})")
+            quota_text = '；'.join(parts) if parts else (log.get('remark') or '')
             log_tree.insert('', 'end', values=(
                 log.get('created_at', ''),
                 log.get('old_level_name') or '-',
                 log.get('new_level_name') or '-',
-                type_text
+                type_text,
+                quota_text
             ))
 
         btn_frame = tk.Frame(self, bg='#fafafa')

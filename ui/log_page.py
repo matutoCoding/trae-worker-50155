@@ -473,9 +473,15 @@ class LogPage(ttk.Frame):
         self.qual_page_info.config(text=f'共 {self.qual_total} 条记录')
         self.qual_page_label.config(text=f'第 {self.qual_page} 页')
 
-        self.stat_valid.config(text=str(valid_count))
-        self.stat_expired.config(text=str(expired_count))
-        self.stat_soon.config(text=str(soon_count))
+        try:
+            stats = qual_db.count_qual_stats()
+            self.stat_valid.config(text=str(stats['valid']))
+            self.stat_expired.config(text=str(stats['expired']))
+            self.stat_soon.config(text=str(stats['soon']))
+        except Exception:
+            self.stat_valid.config(text=str(valid_count))
+            self.stat_expired.config(text=str(expired_count))
+            self.stat_soon.config(text=str(soon_count))
 
     def _search_logs(self):
         self.log_page = 1

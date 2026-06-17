@@ -140,7 +140,25 @@ def init_db():
     ''')
 
     conn.commit()
+    _migrate_db(conn)
     _init_seed_data()
+
+
+def _migrate_db(conn):
+    cursor = conn.cursor()
+    try:
+        cursor.execute('ALTER TABLE level_change_logs ADD COLUMN old_hazardous_quota REAL')
+    except Exception:
+        pass
+    try:
+        cursor.execute('ALTER TABLE level_change_logs ADD COLUMN new_hazardous_quota REAL')
+    except Exception:
+        pass
+    try:
+        cursor.execute('ALTER TABLE level_change_logs ADD COLUMN carry_over_hazardous_amount REAL DEFAULT 0')
+    except Exception:
+        pass
+    conn.commit()
 
 
 def _init_seed_data():

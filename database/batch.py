@@ -127,3 +127,25 @@ def delete_batch(batch_id):
         add_operation_log('试剂批次', '删除', f'删除试剂批次: {batch["reagent_name"]} ({batch["batch_no"]})')
 
     return cursor.rowcount
+
+
+def count_batch_stats():
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute('SELECT is_hazardous, total_quantity, remaining_quantity FROM reagent_batches')
+    rows = cursor.fetchall()
+
+    hazard = 0
+    ok = 0
+    warn = 0
+
+    for row in rows:
+        if row['is_hazardous']:
+            hazard += 1
+        ratio = row['remaining_quantity'] / row['total_quantity'] if row['total_quantity'] > 0 else 0
+        if ratio >= 0.5:
+            ok += 1
+        elif ratio < 0.2:
+            warn += 1
+
+    return {'hazard': hazard, 'ok': ok, 'warn': warn, 'total': len(rows)}
