@@ -7,6 +7,10 @@ import re
 
 
 def _validate_positive_float(value, field_name):
+    if value is None:
+        raise ValueError(f'{field_name}不能为空')
+    if value != value.strip():
+        raise ValueError(f'{field_name}前后不能带空格')
     value = value.strip()
     if not value:
         raise ValueError(f'{field_name}不能为空')
@@ -36,7 +40,52 @@ class BatchPage(ttk.Frame):
     def _create_widgets(self):
         self._create_stats_card()
 
-        card = tk.Frame(self, bg='white')
+        tab_bar = tk.Frame(self, bg='#fafafa')
+        tab_bar.pack(fill='x', pady=(12, 0))
+
+        self.tab_list = tk.Label(tab_bar, text='批次列表',
+                                 font=('Microsoft YaHei', 10, 'bold'),
+                                 bg='#fafafa', fg='#1890ff',
+                                 padx=16, pady=8, cursor='hand2')
+        self.tab_list.pack(side='left', padx=(16, 4))
+        self.tab_list.bind('<Button-1>', lambda e: self._switch_main_tab('list'))
+
+        self.tab_warn_label_var = tk.StringVar()
+        self.tab_warn_label_var.set('预警提醒')
+        self.tab_warn = tk.Label(tab_bar, textvariable=self.tab_warn_label_var,
+                                 font=('Microsoft YaHei', 10),
+                                 bg='#fafafa', fg='#666',
+                                 padx=16, pady=8, cursor='hand2')
+        self.tab_warn.pack(side='left', padx=4)
+        self.tab_warn.bind('<Button-1>', lambda e: self._switch_main_tab('warn'))
+
+        ttk.Separator(self, orient='horizontal').pack(fill='x')
+
+        self.list_frame = tk.Frame(self, bg='white')
+        self.warn_frame = tk.Frame(self, bg='white')
+
+        self._create_list_tab()
+        self._create_warn_tab()
+
+        self.list_frame.pack(fill='both', expand=True, pady=0)
+        self._current_main_tab = 'list'
+
+    def _switch_main_tab(self, tab):
+        self._current_main_tab = tab
+        if tab == 'list':
+            self.tab_list.config(font=('Microsoft YaHei', 10, 'bold'), fg='#1890ff')
+            self.tab_warn.config(font=('Microsoft YaHei', 10), fg='#666')
+            self.list_frame.pack(fill='both', expand=True)
+            self.warn_frame.pack_forget()
+        else:
+            self.tab_list.config(font=('Microsoft YaHei', 10), fg='#666')
+            self.tab_warn.config(font=('Microsoft YaHei', 10, 'bold'), fg='#f5222d')
+            self.list_frame.pack_forget()
+            self.warn_frame.pack(fill='both', expand=True, pady=0)
+            self._refresh_warn_tab()
+
+    def _create_list_tab(self):
+        card = tk.Frame(self.list_frame, bg='white')
         card.pack(fill='both', expand=True, pady=(12, 0))
 
         header = tk.Frame(card, bg='white')
@@ -306,6 +355,18 @@ class BatchPage(ttk.Frame):
             warn_count = sum(1 for r in data if r['remaining_quantity'] / r['total_quantity'] < 0.2)
             self.stat_warn.config(text=str(warn_count))
 
+        try:
+            w = batch_db.get_warning_batches()
+            total_w = w['total_warning']
+            if total_w > 0:
+                self.tab_warn_label_var.set(f'预警提醒 ({total_w})')
+            else:
+                self.tab_warn_label_var.set('预警提醒')
+            self._last_warn = w
+        except Exception:
+            self._last_warn = None
+            self.tab_warn_label_var.set('预警提醒')
+
     def _on_search(self):
         self.current_page = 1
         self.refresh()
@@ -360,6 +421,188 @@ class BatchPage(ttk.Frame):
             messagebox.showwarning('提示', '请先选择一个批次', parent=self)
             return
         DistributionDialog(self, batch['id'])
+
+    def _create_warn_tab(self):
+        f = self.warn_frame
+
+        header = tk.Frame(f, bg='#fff1f0', bd=1, relief='solid')
+        header.pack(fill='x', padx=16, pady=(12, 0))
+
+        tk.Label(header, text='⚠ 批次预警提醒',
+                 font=('Microsoft YaHei', 12, 'bold'),
+                 bg='#fff1f0', fg='#f5222d',
+                 pady=10, padx=14).pack(side='left')
+
+        self.warn_stat_labels = {}
+        for key, label, color in [
+            ('expired', '已过期', '#f5222d'),
+            ('expiring', '即将过期', '#fa8c16'),
+            ('low', '低库存', '#1890ff'),
+        ]:
+            box = tk.Frame(header, bg='#fff1f0')
+            box.pack(side='right', padx=10)
+            num_lbl = tk.Label(box, text='0',
+                               font=('Microsoft YaHei', 14, 'bold'),
+                               bg='#fff1f0', fg=color)
+            num_lbl.pack()
+            tk.Label(box, text=label,
+                     font=('Microsoft YaHei', 9),
+                     bg='#fff1f0', fg='#666').pack()
+            self.warn_stat_labels[key] = num_lbl
+
+        sub_bar = tk.Frame(f, bg='white')
+        sub_bar.pack(fill='x', padx=16, pady=(12, 0))
+
+        self.warn_sub_var = tk.StringVar(value='all')
+        for val, txt in [
+            ('all', '全部'),
+            ('expired', '已过期'),
+            ('expiring', '即将过期'),
+            ('low', '低库存'),
+        ]:
+            lbl = tk.Label(sub_bar, text=txt,
+                           font=('Microsoft YaHei', 10,
+                                 'bold' if val == 'all' else 'normal'),
+                           bg='white',
+                           fg='#1890ff' if val == 'all' else '#666',
+                           padx=12, pady=6, cursor='hand2')
+            lbl.pack(side='left', padx=(0, 4))
+            lbl.bind('<Button-1>', lambda e, v=val: self._switch_warn_subtab(v))
+            setattr(self, f'_warn_sub_{val}', lbl)
+
+        ttk.Separator(f, orient='horizontal').pack(fill='x', padx=16)
+
+        table_wrap = tk.Frame(f, bg='white')
+        table_wrap.pack(fill='both', expand=True, padx=16, pady=(0, 12))
+
+        cols = ['type', 'reagent', 'batch', 'remaining', 'info', 'action']
+        self.warn_tree = ttk.Treeview(table_wrap, columns=cols, show='headings', height=18)
+        for c, t, w, a in [
+            ('type', '预警类型', 100, 'center'),
+            ('reagent', '试剂名称', 160, 'w'),
+            ('batch', '批号', 130, 'w'),
+            ('remaining', '剩余量', 110, 'e'),
+            ('info', '详情', 260, 'w'),
+            ('action', '操作', 130, 'center'),
+        ]:
+            self.warn_tree.heading(c, text=t)
+            self.warn_tree.column(c, width=w, anchor=a)
+        self.warn_tree.tag_configure('expired', foreground='#f5222d')
+        self.warn_tree.tag_configure('expiring', foreground='#fa8c16')
+        self.warn_tree.tag_configure('low', foreground='#1890ff')
+        self.warn_tree.tag_configure('action_link', foreground='#1890ff')
+
+        vsb = ttk.Scrollbar(table_wrap, orient='vertical', command=self.warn_tree.yview)
+        self.warn_tree.configure(yscrollcommand=vsb.set)
+        self.warn_tree.pack(side='left', fill='both', expand=True)
+        vsb.pack(side='right', fill='y')
+
+        self.warn_data_cache = {}
+        self.warn_tree.bind('<Button-1>', self._on_warn_tree_click)
+
+    def _switch_warn_subtab(self, val):
+        self.warn_sub_var.set(val)
+        for key in ['all', 'expired', 'expiring', 'low']:
+            lbl = getattr(self, f'_warn_sub_{key}', None)
+            if lbl:
+                is_active = key == val
+                lbl.config(font=('Microsoft YaHei', 10,
+                                 'bold' if is_active else 'normal'),
+                           fg='#1890ff' if is_active else '#666')
+        self._refresh_warn_tab()
+
+    def _refresh_warn_tab(self):
+        w = getattr(self, '_last_warn', None)
+        if w is None:
+            try:
+                w = batch_db.get_warning_batches()
+            except Exception:
+                w = {'expired': [], 'expiring': [], 'low_stock': [], 'total_warning': 0}
+
+        self.warn_stat_labels['expired'].config(text=str(w.get('expired_count', 0)))
+        self.warn_stat_labels['expiring'].config(text=str(w.get('expiring_count', 0)))
+        low_count = len(w.get('low_stock', [])) if isinstance(w, dict) else 0
+        self.warn_stat_labels['low'].config(text=str(w.get('low_stock_count', low_count)))
+
+        subtab = self.warn_sub_var.get()
+        rows = []
+        if subtab in ('all', 'expired'):
+            rows += [('expired', r) for r in w.get('expired', [])]
+        if subtab in ('all', 'expiring'):
+            rows += [('expiring', r) for r in w.get('expiring', [])]
+        if subtab in ('all', 'low'):
+            rows += [('low', r) for r in w.get('low_stock', [])]
+
+        for item in self.warn_tree.get_children():
+            self.warn_tree.delete(item)
+        self.warn_data_cache.clear()
+
+        for idx, (warn_type, r) in enumerate(rows):
+            if warn_type == 'expired':
+                type_text = '已过期'
+                info_parts = [f"有效期至 {r['expiry_date']} 已过期 {-r.get('_expiry_days', 0)} 天"]
+            elif warn_type == 'expiring':
+                type_text = '即将过期'
+                info_parts = [f"剩余 {r.get('_expiry_days', 0)} 天过期（至 {r['expiry_date']}）"]
+            else:
+                type_text = '低库存'
+                ratio = r.get('_stock_ratio', 0)
+                info_parts = [f"剩余比例 {ratio*100:.1f}%"]
+
+            if r['is_hazardous']:
+                type_text = '⚠' + type_text
+
+            ratio = r['remaining_quantity'] / r['total_quantity'] if r['total_quantity'] > 0 else 0
+            remain_text = f"{r['remaining_quantity']} {r['unit']} ({ratio*100:.1f}%)"
+
+            item_id = self.warn_tree.insert('', 'end', values=(
+                type_text,
+                r['reagent_name'],
+                r['batch_no'],
+                remain_text,
+                '；'.join(info_parts),
+                '查看详情｜发起出库',
+            ), tags=(warn_type,))
+
+            self.warn_data_cache[item_id] = r
+
+    def _on_warn_tree_click(self, event):
+        region = self.warn_tree.identify('region', event.x, event.y)
+        if region != 'cell':
+            return
+        col = self.warn_tree.identify_column(event.x)
+        item = self.warn_tree.identify_row(event.y)
+        if not item or col != '#6':
+            return
+        batch = self.warn_data_cache.get(item)
+        if not batch:
+            return
+        x_start = self.warn_tree.bbox(item, '#6')[0]
+        text = self.warn_tree.item(item, 'values')[5]
+        detail_end = text.index('｜')
+        if event.x < x_start + (detail_end / len(text)) * 130:
+            BatchDetailDialog(self, batch)
+        else:
+            from ui.outbound_page import OutboundDialog
+            from database import level as level_db
+            from database import batch as _b
+            try:
+                all_b = _b.list_batches(page=1, page_size=9999)['data']
+            except Exception:
+                all_b = [batch]
+            try:
+                all_p = level_db.list_projects()
+            except Exception:
+                all_p = []
+            dlg = OutboundDialog(self, batches=all_b, projects=all_p,
+                                 on_success=self.refresh)
+            try:
+                display = f"{batch['reagent_name']} ({batch['batch_no']}) - 剩余{batch['remaining_quantity']}{batch['unit']}"
+                idx = dlg.batch_combo['values'].index(display)
+                dlg.batch_combo.current(idx)
+                dlg._on_batch_select(None)
+            except Exception:
+                pass
 
 
 class BatchDialog(tk.Toplevel):

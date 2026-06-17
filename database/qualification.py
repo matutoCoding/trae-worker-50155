@@ -172,3 +172,77 @@ def count_qual_stats():
             valid += 1
 
     return {'valid': valid, 'expired': expired, 'soon': soon, 'total': len(rows)}
+
+
+def check_project_hazardous_valid(project_id):
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT * FROM hazardous_qualifications
+        WHERE project_id = ?
+        ORDER BY created_at DESC
+    ''', (project_id,))
+    rows = cursor.fetchall()
+
+    if not rows:
+        return {'has_qual': False, 'reason': '该项目组未登记危化品资质，请先在「变更留痕-危化品资质」中添加', 'qual': None}
+
+    from datetime import date as _date, datetime as _dt
+    today = _date.today()
+
+    best_qual = None
+    best_status = None
+
+    for r in rows:
+        r = dict(r)
+        status = r['status']
+        is_expired = False
+        is_soon = False
+        if r['expiry_date']:
+            try:
+                exp = _dt.strptime(r['expiry_date'], '%Y-%m-%d').date()
+                if exp < today:
+                    is_expired = True
+                elif (exp - today).days < 30:
+                    is_soon = True
+            except Exception:
+                pass
+
+        effective_status = 'expired' if (is_expired or status == 'expired') else ('valid' if status == 'valid' else status)
+
+        if effective_status == 'valid':
+            if not best_qual or is_soon:
+                best_qual = r
+                best_status = 'soon' if is_soon else 'valid'
+                if best_status == 'valid':
+                    break
+        elif effective_status != 'expired':
+            if not best_qual:
+                best_qual = r
+                best_status = effective_status
+
+    if best_status == 'valid':
+        return {'has_qual': True, 'reason': None, 'qual': best_qual}
+
+    if best_status == 'soon':
+        days = None
+        if best_qual and best_qual['expiry_date']:
+            try:
+                exp = _dt.strptime(best_qual['expiry_date'], '%Y-%m-%d').date()
+                days = (exp - today).days
+            except Exception:
+                pass
+        msg = '该项目组危化品资质即将过期'
+        if days is not None:
+            msg += f'（剩余 {days} 天，至 {best_qual["expiry_date"]}）'
+        msg += '，请尽快办理续期'
+        return {'has_qual': True, 'reason': msg, 'qual': best_qual, 'warning': True}
+
+    if best_qual and (best_qual['status'] == 'expired' or best_qual['expiry_date']):
+        reason = f"该项目组危化品资质已过期（有效期至 {best_qual['expiry_date']}），请续期后再出库危化品"
+        return {'has_qual': False, 'reason': reason, 'qual': best_qual}
+
+    if best_qual and best_qual['status'] == 'pending':
+        return {'has_qual': False, 'reason': '该项目组危化品资质状态为待审批，暂不允许出库危化品', 'qual': best_qual}
+
+    return {'has_qual': False, 'reason': '该项目组无有效危化品资质，暂不允许出库危化品', 'qual': best_qual}

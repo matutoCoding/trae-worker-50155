@@ -149,3 +149,59 @@ def count_batch_stats():
             warn += 1
 
     return {'hazard': hazard, 'ok': ok, 'warn': warn, 'total': len(rows)}
+
+
+def get_warning_batches(expiry_days=30, low_ratio=0.2):
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM reagent_batches ORDER BY created_at DESC')
+    rows = [dict(r) for r in cursor.fetchall()]
+
+    from datetime import date as _date, datetime as _dt
+    today = _date.today()
+
+    expired = []
+    expiring = []
+    low_stock = []
+
+    for r in rows:
+        ratio = r['remaining_quantity'] / r['total_quantity'] if r['total_quantity'] > 0 else 0
+
+        warning_types = []
+        exp_date = None
+
+        if r['expiry_date']:
+            try:
+                exp_date = _dt.strptime(r['expiry_date'], '%Y-%m-%d').date()
+                delta_days = (exp_date - today).days
+                if delta_days < 0:
+                    warning_types.append('expired')
+                    r['_expiry_days'] = delta_days
+                elif delta_days < expiry_days:
+                    warning_types.append('expiring')
+                    r['_expiry_days'] = delta_days
+            except Exception:
+                pass
+
+        if ratio < low_ratio:
+            warning_types.append('low_stock')
+            r['_stock_ratio'] = ratio
+
+        r['_warning_types'] = warning_types
+
+        if 'expired' in warning_types:
+            expired.append(r)
+        if 'expiring' in warning_types:
+            expiring.append(r)
+        if 'low_stock' in warning_types:
+            low_stock.append(r)
+
+    return {
+        'expired': expired,
+        'expiring': expiring,
+        'low_stock': low_stock,
+        'expired_count': len(expired),
+        'expiring_count': len(expiring),
+        'low_stock_count': len(low_stock),
+        'total_warning': len(expired) + len(expiring) + len(low_stock),
+    }

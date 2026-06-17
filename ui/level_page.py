@@ -5,6 +5,10 @@ import re
 
 
 def _validate_positive_int(value, field_name):
+    if value is None:
+        raise ValueError(f'{field_name}不能为空')
+    if value != value.strip():
+        raise ValueError(f'{field_name}前后不能带空格')
     value = value.strip()
     if not value:
         raise ValueError(f'{field_name}不能为空')
@@ -17,6 +21,10 @@ def _validate_positive_int(value, field_name):
 
 
 def _validate_positive_float(value, field_name):
+    if value is None:
+        raise ValueError(f'{field_name}不能为空')
+    if value != value.strip():
+        raise ValueError(f'{field_name}前后不能带空格')
     value = value.strip()
     if not value:
         raise ValueError(f'{field_name}不能为空')
@@ -29,6 +37,10 @@ def _validate_positive_float(value, field_name):
 
 
 def _validate_nonneg_float(value, field_name):
+    if value is None:
+        return 0
+    if value != '' and value != value.strip():
+        raise ValueError(f'{field_name}前后不能带空格')
     value = value.strip()
     if not value:
         return 0
@@ -851,39 +863,109 @@ class ProjectDetailDialog(tk.Toplevel):
         super().__init__(parent)
         self.parent = parent
         self.project_id = project_id
+        self.selected_month = tk.StringVar()
 
         self.title('项目组详情')
-        self.geometry('620x540')
+        self.geometry('700x600')
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
 
-        self._create_widgets()
+        self._load_project_data()
+        if not self.project:
+            tk.Label(self, text='项目组不存在', font=('Microsoft YaHei', 12),
+                     bg='white', fg='#f5222d').pack(pady=20)
+            return
 
-    def _create_widgets(self):
-        container = tk.Frame(self, bg='white')
-        container.pack(fill='both', expand=True, padx=20, pady=16)
+        self._create_tabs()
+        self._create_btn_frame()
 
+    def _load_project_data(self):
         projects = level_db.list_projects()
         self.project = None
         for p in projects:
             if p['id'] == self.project_id:
                 self.project = p
                 break
-        if not self.project:
-            tk.Label(container, text='项目组不存在', font=('Microsoft YaHei', 12),
-                     bg='white', fg='#f5222d').pack()
-            return
 
-        tk.Label(container, text=self.project['group_name'],
+    def _create_tabs(self):
+        tab_bar = tk.Frame(self, bg='#fafafa')
+        tab_bar.pack(fill='x', padx=16, pady=(16, 0))
+
+        self.tab_info = tk.Label(tab_bar, text='基本信息',
+                                 font=('Microsoft YaHei', 10, 'bold'),
+                                 bg='#fafafa', fg='#1890ff',
+                                 padx=14, pady=8, cursor='hand2')
+        self.tab_info.pack(side='left', padx=(0, 4))
+        self.tab_info.bind('<Button-1>', lambda e: self._switch_tab('info'))
+
+        self.tab_logs = tk.Label(tab_bar, text='升降级记录',
+                                 font=('Microsoft YaHei', 10),
+                                 bg='#fafafa', fg='#666',
+                                 padx=14, pady=8, cursor='hand2')
+        self.tab_logs.pack(side='left', padx=4)
+        self.tab_logs.bind('<Button-1>', lambda e: self._switch_tab('logs'))
+
+        self.tab_ledger = tk.Label(tab_bar, text='额度台账',
+                                   font=('Microsoft YaHei', 10),
+                                   bg='#fafafa', fg='#666',
+                                   padx=14, pady=8, cursor='hand2')
+        self.tab_ledger.pack(side='left', padx=4)
+        self.tab_ledger.bind('<Button-1>', lambda e: self._switch_tab('ledger'))
+
+        ttk.Separator(self, orient='horizontal').pack(fill='x', padx=16)
+
+        self.info_frame = tk.Frame(self, bg='white')
+        self.logs_frame = tk.Frame(self, bg='white')
+        self.ledger_frame = tk.Frame(self, bg='white')
+
+        self._create_info_tab()
+        self._create_logs_tab()
+        self._create_ledger_tab()
+
+        self.info_frame.pack(fill='both', expand=True, padx=16, pady=8)
+        self._current_tab = 'info'
+
+    def _switch_tab(self, tab):
+        self._current_tab = tab
+        tabs = {
+            'info': (self.tab_info, self.info_frame),
+            'logs': (self.tab_logs, self.logs_frame),
+            'ledger': (self.tab_ledger, self.ledger_frame),
+        }
+        for name, (t, f) in tabs.items():
+            if name == tab:
+                t.config(font=('Microsoft YaHei', 10, 'bold'), fg='#1890ff')
+                f.pack(fill='both', expand=True, padx=16, pady=8)
+            else:
+                t.config(font=('Microsoft YaHei', 10), fg='#666')
+                f.pack_forget()
+        if tab == 'ledger':
+            self._reload_ledger()
+
+    def _create_btn_frame(self):
+        btn_frame = tk.Frame(self, bg='#fafafa')
+        btn_frame.pack(fill='x', side='bottom')
+
+        tk.Button(btn_frame, text='关闭',
+                  font=('Microsoft YaHei', 10),
+                  bg='#1890ff', fg='white',
+                  activebackground='#40a9ff', activeforeground='white',
+                  relief='flat', padx=24, pady=8, cursor='hand2',
+                  command=self.destroy).pack(side='right', padx=12, pady=12)
+
+    def _create_info_tab(self):
+        f = self.info_frame
+
+        tk.Label(f, text=self.project['group_name'],
                  font=('Microsoft YaHei', 14, 'bold'),
                  bg='white', fg='#333').pack(anchor='w')
 
-        tk.Label(container, text=f"等级：{self.project['level_name']}",
+        tk.Label(f, text=f"等级：{self.project['level_name']}",
                  font=('Microsoft YaHei', 10),
                  bg='white', fg='#1890ff').pack(anchor='w', pady=(4, 12))
 
-        info_frame = tk.Frame(container, bg='#fafafa', bd=1, relief='solid')
+        info_frame = tk.Frame(f, bg='#fafafa', bd=1, relief='solid')
         info_frame.pack(fill='x')
 
         info_data = [
@@ -902,7 +984,7 @@ class ProjectDetailDialog(tk.Toplevel):
                      font=('Microsoft YaHei', 10),
                      bg='#fafafa', fg='#333').pack(side='left')
 
-        quota_frame = tk.Frame(container, bg='white')
+        quota_frame = tk.Frame(f, bg='white')
         quota_frame.pack(fill='x', pady=16)
 
         tk.Label(quota_frame, text='额度使用情况',
@@ -919,7 +1001,7 @@ class ProjectDetailDialog(tk.Toplevel):
 
         bar_bg = tk.Frame(quota_frame, bg='#f0f0f0', height=16)
         bar_bg.pack(fill='x', pady=(0, 4))
-        bar_width = max(1, int(normal_percent * 4.8))
+        bar_width = max(1, int(normal_percent * 6.2))
         bar_color = '#52c41a' if normal_percent < 60 else '#fa8c16' if normal_percent < 80 else '#f5222d'
         tk.Frame(bar_bg, bg=bar_color, width=bar_width, height=16).pack(side='left')
 
@@ -933,13 +1015,16 @@ class ProjectDetailDialog(tk.Toplevel):
 
         bar_bg2 = tk.Frame(quota_frame, bg='#f0f0f0', height=16)
         bar_bg2.pack(fill='x', pady=(0, 4))
-        bar_width2 = max(1, int(hazard_percent * 4.8))
+        bar_width2 = max(1, int(hazard_percent * 6.2))
         bar_color2 = '#52c41a' if hazard_percent < 60 else '#fa8c16' if hazard_percent < 80 else '#f5222d'
         tk.Frame(bar_bg2, bg=bar_color2, width=bar_width2, height=16).pack(side='left')
 
-        tk.Label(container, text='升降级记录',
+    def _create_logs_tab(self):
+        f = self.logs_frame
+
+        tk.Label(f, text='升降级记录',
                  font=('Microsoft YaHei', 11, 'bold'),
-                 bg='white', fg='#333').pack(anchor='w', pady=(12, 8))
+                 bg='white', fg='#333').pack(anchor='w', pady=(4, 8))
 
         try:
             result = level_db.get_quota_usage(self.project['id'])
@@ -947,11 +1032,8 @@ class ProjectDetailDialog(tk.Toplevel):
         except:
             change_logs = []
 
-        logs_frame = tk.Frame(container, bg='white')
-        logs_frame.pack(fill='both', expand=True)
-
         columns = ['date', 'old_level', 'new_level', 'type', 'quota_change']
-        log_tree = ttk.Treeview(logs_frame, columns=columns, show='headings', height=6)
+        log_tree = ttk.Treeview(f, columns=columns, show='headings', height=14)
 
         log_tree.heading('date', text='时间')
         log_tree.heading('old_level', text='原等级')
@@ -963,9 +1045,9 @@ class ProjectDetailDialog(tk.Toplevel):
         log_tree.column('old_level', width=70, anchor='center')
         log_tree.column('new_level', width=70, anchor='center')
         log_tree.column('type', width=80, anchor='center')
-        log_tree.column('quota_change', width=200, anchor='w')
+        log_tree.column('quota_change', width=300, anchor='w')
 
-        vsb = ttk.Scrollbar(logs_frame, orient='vertical', command=log_tree.yview)
+        vsb = ttk.Scrollbar(f, orient='vertical', command=log_tree.yview)
         log_tree.configure(yscrollcommand=vsb.set)
 
         log_tree.pack(side='left', fill='both', expand=True)
@@ -995,12 +1077,142 @@ class ProjectDetailDialog(tk.Toplevel):
                 quota_text
             ))
 
-        btn_frame = tk.Frame(self, bg='#fafafa')
-        btn_frame.pack(fill='x', side='bottom')
+    def _get_month_options(self):
+        from datetime import datetime as _dt
+        now = _dt.now()
+        months = []
+        for i in range(12):
+            d = _dt(now.year, now.month, 1)
+            if d.month - i <= 0:
+                d = _dt(d.year - 1, 12 - i + d.month, 1)
+            else:
+                d = _dt(d.year, d.month - i, 1)
+            months.append(d.strftime('%Y-%m'))
+        return months
 
-        tk.Button(btn_frame, text='关闭',
-                  font=('Microsoft YaHei', 10),
-                  bg='#1890ff', fg='white',
-                  activebackground='#40a9ff', activeforeground='white',
-                  relief='flat', padx=24, pady=8, cursor='hand2',
-                  command=self.destroy).pack(side='right', padx=12, pady=12)
+    def _create_ledger_tab(self):
+        f = self.ledger_frame
+
+        header = tk.Frame(f, bg='white')
+        header.pack(fill='x', pady=(4, 8))
+
+        tk.Label(header, text='额度台账',
+                 font=('Microsoft YaHei', 11, 'bold'),
+                 bg='white', fg='#333').pack(side='left')
+
+        tk.Label(header, text='查看月份：',
+                 font=('Microsoft YaHei', 9),
+                 bg='white', fg='#666').pack(side='right', padx=(0, 4))
+        months = self._get_month_options()
+        self.selected_month.set(months[0])
+        month_combo = ttk.Combobox(header, textvariable=self.selected_month,
+                                    values=months, width=12, state='readonly')
+        month_combo.pack(side='right')
+        month_combo.bind('<<ComboboxSelected>>', lambda e: self._reload_ledger())
+
+        self.ledger_content = tk.Frame(f, bg='white')
+        self.ledger_content.pack(fill='both', expand=True)
+
+    def _reload_ledger(self):
+        for child in self.ledger_content.winfo_children():
+            child.destroy()
+
+        from database import outbound as outbound_db
+
+        month = self.selected_month.get()
+        result = outbound_db.get_project_monthly_outbound(self.project['id'], month)
+
+        normal_total = result['normal_total']
+        hazard_total = result['hazard_total']
+        normal_quota = self.project['current_quota']
+        hazard_quota = self.project['current_hazardous_quota']
+        used_normal = self.project['used_quota']
+        used_hazard = self.project['used_hazardous_quota']
+        remain_normal = normal_quota - used_normal
+        remain_hazard = hazard_quota - used_hazard
+
+        stats_wrap = tk.Frame(self.ledger_content, bg='white')
+        stats_wrap.pack(fill='x', pady=(0, 8))
+
+        left_col = tk.Frame(stats_wrap, bg='#f0f7ff', bd=1, relief='solid')
+        left_col.pack(side='left', fill='x', expand=True, padx=(0, 6))
+        tk.Label(left_col, text='普通试剂',
+                 font=('Microsoft YaHei', 9, 'bold'),
+                 bg='#f0f7ff', fg='#1890ff').pack(anchor='w', padx=10, pady=(6, 2))
+        tk.Label(left_col,
+                 text=f"本月出库：¥{normal_total:,.0f}　累计占用：¥{used_normal:,.0f}　剩余：¥{remain_normal:,.0f}",
+                 font=('Microsoft YaHei', 9),
+                 bg='#f0f7ff', fg='#333').pack(anchor='w', padx=10, pady=(0, 6))
+
+        right_col = tk.Frame(stats_wrap, bg='#fff1f0', bd=1, relief='solid')
+        right_col.pack(side='right', fill='x', expand=True, padx=(6, 0))
+        tk.Label(right_col, text='危化品',
+                 font=('Microsoft YaHei', 9, 'bold'),
+                 bg='#fff1f0', fg='#f5222d').pack(anchor='w', padx=10, pady=(6, 2))
+        tk.Label(right_col,
+                 text=f"本月出库：¥{hazard_total:,.0f}　累计占用：¥{used_hazard:,.0f}　剩余：¥{remain_hazard:,.0f}",
+                 font=('Microsoft YaHei', 9),
+                 bg='#fff1f0', fg='#333').pack(anchor='w', padx=10, pady=(0, 6))
+
+        tk.Label(self.ledger_content, text='普通试剂出库明细',
+                 font=('Microsoft YaHei', 10, 'bold'),
+                 bg='white', fg='#333').pack(anchor='w', pady=(4, 4))
+
+        cols = ['date', 'reagent', 'batch_no', 'quantity', 'receiver', 'purpose']
+        n_tree = ttk.Treeview(self.ledger_content, columns=cols, show='headings', height=6)
+        for c, t, w, a in [
+            ('date', '时间', 120, 'w'),
+            ('reagent', '试剂', 150, 'w'),
+            ('batch_no', '批号', 110, 'w'),
+            ('quantity', '数量', 80, 'e'),
+            ('receiver', '领取人', 80, 'w'),
+            ('purpose', '用途', 180, 'w'),
+        ]:
+            n_tree.heading(c, text=t)
+            n_tree.column(c, width=w, anchor=a)
+        n_vsb = ttk.Scrollbar(self.ledger_content, orient='vertical', command=n_tree.yview)
+        n_tree.configure(yscrollcommand=n_vsb.set)
+
+        n_tree.pack(side='top', fill='x', expand=False)
+        n_vsb.place(relx=1.0, rely=0.1, anchor='ne')
+
+        for r in result['normal_records']:
+            n_tree.insert('', 'end', values=(
+                r.get('outbound_date', '')[:19],
+                r.get('reagent_name', ''),
+                r.get('batch_no', ''),
+                f"{r['quantity']} {r.get('unit','')}",
+                r.get('receiver', '') or '-',
+                r.get('purpose', '') or '-',
+            ))
+
+        tk.Label(self.ledger_content, text='危化品出库明细',
+                 font=('Microsoft YaHei', 10, 'bold'),
+                 bg='white', fg='#333').pack(anchor='w', pady=(10, 4))
+
+        h_tree = ttk.Treeview(self.ledger_content, columns=cols, show='headings', height=6)
+        for c, t, w, a in [
+            ('date', '时间', 120, 'w'),
+            ('reagent', '试剂', 150, 'w'),
+            ('batch_no', '批号', 110, 'w'),
+            ('quantity', '数量', 80, 'e'),
+            ('receiver', '领取人', 80, 'w'),
+            ('purpose', '用途', 180, 'w'),
+        ]:
+            h_tree.heading(c, text=t)
+            h_tree.column(c, width=w, anchor=a)
+        h_tree.tag_configure('hazard', foreground='#f5222d')
+        h_vsb = ttk.Scrollbar(self.ledger_content, orient='vertical', command=h_tree.yview)
+        h_tree.configure(yscrollcommand=h_vsb.set)
+
+        h_tree.pack(side='top', fill='x', expand=False)
+
+        for r in result['hazard_records']:
+            h_tree.insert('', 'end', values=(
+                r.get('outbound_date', '')[:19],
+                r.get('reagent_name', ''),
+                r.get('batch_no', ''),
+                f"{r['quantity']} {r.get('unit','')}",
+                r.get('receiver', '') or '-',
+                r.get('purpose', '') or '-',
+            ), tags=('hazard',))

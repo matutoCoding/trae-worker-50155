@@ -164,3 +164,38 @@ def get_distribution(batch_id):
         'batch': batch,
         'total_outbound': total_outbound
     }
+
+
+def get_project_monthly_outbound(project_id, year_month=None):
+    conn = get_conn()
+    cursor = conn.cursor()
+
+    where_sql = 'WHERE o.project_id = ?'
+    params = [project_id]
+
+    if year_month:
+        where_sql += " AND substr(o.outbound_date, 1, 7) = ?"
+        params.append(year_month)
+
+    cursor.execute(f'''
+        SELECT o.*, b.reagent_name, b.batch_no, b.unit, b.is_hazardous
+        FROM outbound_records o
+        LEFT JOIN reagent_batches b ON o.batch_id = b.id
+        {where_sql}
+        ORDER BY o.outbound_date DESC
+    ''', params)
+    records = [dict(row) for row in cursor.fetchall()]
+
+    normal_records = [r for r in records if not r['is_hazardous']]
+    hazard_records = [r for r in records if r['is_hazardous']]
+    normal_total = sum(r['quantity'] for r in normal_records)
+    hazard_total = sum(r['quantity'] for r in hazard_records)
+
+    return {
+        'records': records,
+        'normal_records': normal_records,
+        'hazard_records': hazard_records,
+        'normal_total': normal_total,
+        'hazard_total': hazard_total,
+        'count': len(records)
+    }

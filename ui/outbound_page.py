@@ -9,6 +9,10 @@ import re
 
 
 def _validate_positive_float(value, field_name):
+    if value is None:
+        raise ValueError(f'{field_name}不能为空')
+    if value != value.strip():
+        raise ValueError(f'{field_name}前后不能带空格')
     value = value.strip()
     if not value:
         raise ValueError(f'{field_name}不能为空')
@@ -474,6 +478,24 @@ class OutboundDialog(tk.Toplevel):
         if not project_id:
             messagebox.showerror('错误', '请选择去向项目组', parent=self)
             return
+
+        if self.selected_batch_data['is_hazardous']:
+            from database import qualification as qual_db
+            try:
+                qual_result = qual_db.check_project_hazardous_valid(project_id)
+            except Exception:
+                qual_result = {'has_qual': True, 'reason': None}
+
+            if not qual_result.get('has_qual'):
+                msg = qual_result.get('reason') or '该项目组无有效危化品资质'
+                messagebox.showerror('危化品资质校验失败', msg, parent=self)
+                return
+
+            if qual_result.get('warning') and qual_result.get('reason'):
+                if not messagebox.askyesno('资质即将过期',
+                                           f"{qual_result['reason']}\n\n是否仍然继续出库？",
+                                           parent=self, icon='warning'):
+                    return
 
         data = {
             'batch_id': self.selected_batch_data['id'],
