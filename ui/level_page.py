@@ -10,8 +10,11 @@ class LevelPage(ttk.Frame):
         self.levels = []
         self.projects = []
         self.current_tab = 'projects'
+        self.project_data_cache = {}
+        self.level_data_cache = {}
 
         self._create_widgets()
+        self._bind_events()
         self.refresh()
 
     def _create_widgets(self):
@@ -95,18 +98,39 @@ class LevelPage(ttk.Frame):
                  font=('Microsoft YaHei', 12, 'bold'),
                  bg='white', fg='#333').pack(side='left')
 
-        tk.Button(header, text='+ 新增项目组',
+        btn_group = tk.Frame(header, bg='white')
+        btn_group.pack(side='right')
+
+        tk.Button(btn_group, text='+ 新增项目组',
                   font=('Microsoft YaHei', 10),
                   bg='#1890ff', fg='white',
                   activebackground='#40a9ff', activeforeground='white',
                   relief='flat', padx=16, pady=6, cursor='hand2',
-                  command=self._on_add_project).pack(side='right')
+                  command=self._on_add_project).pack(side='right', padx=(8, 0))
+
+        tk.Button(btn_group, text='升降级',
+                  font=('Microsoft YaHei', 10),
+                  bg='#52c41a', fg='white',
+                  activebackground='#73d13d', activeforeground='white',
+                  relief='flat', padx=12, pady=6, cursor='hand2',
+                  command=self._on_change_level).pack(side='right')
+
+        tk.Button(btn_group, text='编辑',
+                  font=('Microsoft YaHei', 10),
+                  bg='#fa8c16', fg='white',
+                  activebackground='#ffa940', activeforeground='white',
+                  relief='flat', padx=12, pady=6, cursor='hand2',
+                  command=self._on_edit_project).pack(side='right', padx=(0, 8))
+
+        tk.Label(self.project_content, text='（双击行可编辑，右键可查看更多操作）',
+                 font=('Microsoft YaHei', 9),
+                 bg='white', fg='#999').pack(anchor='w', pady=(8, 0))
 
         table_frame = tk.Frame(self.project_content, bg='white')
-        table_frame.pack(fill='both', expand=True, pady=(12, 0))
+        table_frame.pack(fill='both', expand=True, pady=(8, 0))
 
         columns = ['group_name', 'level_name', 'quota_usage', 'hazard_usage',
-                   'leader', 'contact', 'action']
+                   'leader', 'contact']
         self.project_tree = ttk.Treeview(table_frame, columns=columns,
                                           show='headings', height=12)
 
@@ -116,15 +140,13 @@ class LevelPage(ttk.Frame):
         self.project_tree.heading('hazard_usage', text='危化品额度使用')
         self.project_tree.heading('leader', text='负责人')
         self.project_tree.heading('contact', text='联系电话')
-        self.project_tree.heading('action', text='操作')
 
         self.project_tree.column('group_name', width=160, anchor='w')
         self.project_tree.column('level_name', width=80, anchor='center')
-        self.project_tree.column('quota_usage', width=200, anchor='w')
-        self.project_tree.column('hazard_usage', width=180, anchor='w')
+        self.project_tree.column('quota_usage', width=240, anchor='w')
+        self.project_tree.column('hazard_usage', width=220, anchor='w')
         self.project_tree.column('leader', width=90, anchor='w')
         self.project_tree.column('contact', width=120, anchor='w')
-        self.project_tree.column('action', width=150, anchor='center')
 
         vsb = ttk.Scrollbar(table_frame, orient='vertical',
                             command=self.project_tree.yview)
@@ -134,6 +156,13 @@ class LevelPage(ttk.Frame):
         vsb.pack(side='right', fill='y')
 
         self.project_tree.tag_configure('warning', foreground='#fa8c16')
+
+        self.project_context_menu = tk.Menu(self.project_tree, tearoff=0)
+        self.project_context_menu.add_command(label='查看详情', command=self._on_project_detail)
+        self.project_context_menu.add_command(label='编辑', command=self._on_edit_project)
+        self.project_context_menu.add_command(label='升降级', command=self._on_change_level)
+        self.project_context_menu.add_separator()
+        self.project_context_menu.add_command(label='删除', command=self._on_delete_project)
 
     def _create_level_tab(self):
         header = tk.Frame(self.level_content, bg='white')
@@ -179,6 +208,11 @@ class LevelPage(ttk.Frame):
         self.level_tree.pack(side='left', fill='both', expand=True)
         vsb.pack(side='right', fill='y')
 
+        self.level_context_menu = tk.Menu(self.level_tree, tearoff=0)
+        self.level_context_menu.add_command(label='编辑', command=self._on_edit_level)
+        self.level_context_menu.add_separator()
+        self.level_context_menu.add_command(label='删除', command=self._on_delete_level)
+
     def _switch_tab(self, tab):
         self.current_tab = tab
 
@@ -199,9 +233,11 @@ class LevelPage(ttk.Frame):
 
         for item in self.project_tree.get_children():
             self.project_tree.delete(item)
+        self.project_data_cache.clear()
 
         for item in self.level_tree.get_children():
             self.level_tree.delete(item)
+        self.level_data_cache.clear()
 
         for p in self.projects:
             quota_percent = (p['used_quota'] / p['current_quota'] * 100) if p['current_quota'] > 0 else 0
@@ -214,25 +250,26 @@ class LevelPage(ttk.Frame):
             if quota_percent > 80 or hazard_percent > 80:
                 tags = ('warning',)
 
-            self.project_tree.insert('', 'end', values=(
+            item_id = self.project_tree.insert('', 'end', values=(
                 p['group_name'],
                 p['level_name'],
                 quota_text,
                 hazard_text,
                 p.get('leader') or '-',
-                p.get('contact') or '-',
-                '详情  编辑  升降级'
+                p.get('contact') or '-'
             ), tags=tags)
 
+            self.project_data_cache[item_id] = p
+
         for l in self.levels:
-            self.level_tree.insert('', 'end', values=(
+            item_id = self.level_tree.insert('', 'end', values=(
                 l['level_name'],
                 f'第 {l["level_rank"]} 级',
                 f"¥{l['monthly_quota']:,.0f}",
                 f"¥{l['hazardous_quota']:,.0f}",
-                l.get('description') or '-',
-                '编辑  删除'
+                l.get('description') or '-'
             ))
+            self.level_data_cache[item_id] = l
 
         total_quota = sum(p['current_quota'] for p in self.projects)
         total_used = sum(p['used_quota'] for p in self.projects)
@@ -243,11 +280,107 @@ class LevelPage(ttk.Frame):
         self.stat_used.config(text=f"¥{total_used:,.0f}")
         self.stat_hazard.config(text=f"¥{total_hazardous:,.0f}")
 
+    def _bind_events(self):
+        self.project_tree.bind('<Double-1>', self._on_project_double_click)
+        self.project_tree.bind('<Button-3>', self._on_project_right_click)
+        self.level_tree.bind('<Double-1>', self._on_level_double_click)
+        self.level_tree.bind('<Button-3>', self._on_level_right_click)
+
+    def _get_selected_project(self):
+        selection = self.project_tree.selection()
+        if not selection:
+            return None
+        item_id = selection[0]
+        return self.project_data_cache.get(item_id)
+
+    def _get_selected_level(self):
+        selection = self.level_tree.selection()
+        if not selection:
+            return None
+        item_id = selection[0]
+        return self.level_data_cache.get(item_id)
+
+    def _on_project_double_click(self, event):
+        self._on_edit_project()
+
+    def _on_project_right_click(self, event):
+        item = self.project_tree.identify_row(event.y)
+        if item:
+            self.project_tree.selection_set(item)
+            self.project_context_menu.post(event.x_root, event.y_root)
+
+    def _on_level_double_click(self, event):
+        self._on_edit_level()
+
+    def _on_level_right_click(self, event):
+        item = self.level_tree.identify_row(event.y)
+        if item:
+            self.level_tree.selection_set(item)
+            self.level_context_menu.post(event.x_root, event.y_root)
+
     def _on_add_project(self):
         ProjectDialog(self, levels=self.levels, mode='add', on_success=self.refresh)
 
+    def _on_edit_project(self):
+        project = self._get_selected_project()
+        if not project:
+            messagebox.showwarning('提示', '请先选择一个项目组', parent=self)
+            return
+        ProjectDialog(self, levels=self.levels, mode='edit', data=project, on_success=self.refresh)
+
+    def _on_delete_project(self):
+        project = self._get_selected_project()
+        if not project:
+            messagebox.showwarning('提示', '请先选择一个项目组', parent=self)
+            return
+        if messagebox.askyesno('确认删除',
+                               f'确定要删除项目组 "{project["group_name"]}" 吗？\n此操作不可恢复！',
+                               parent=self, icon='warning'):
+            try:
+                level_db.delete_project(project['id'])
+                messagebox.showinfo('成功', '删除成功', parent=self)
+                self.refresh()
+            except Exception as e:
+                messagebox.showerror('错误', str(e), parent=self)
+
+    def _on_project_detail(self):
+        project = self._get_selected_project()
+        if not project:
+            messagebox.showwarning('提示', '请先选择一个项目组', parent=self)
+            return
+        ProjectDetailDialog(self, project)
+
+    def _on_change_level(self):
+        project = self._get_selected_project()
+        if not project:
+            messagebox.showwarning('提示', '请先选择一个项目组', parent=self)
+            return
+        LevelChangeDialog(self, project, self.levels, on_success=self.refresh)
+
     def _on_add_level(self):
         LevelDialog(self, mode='add', on_success=self.refresh)
+
+    def _on_edit_level(self):
+        level = self._get_selected_level()
+        if not level:
+            messagebox.showwarning('提示', '请先选择一个等级', parent=self)
+            return
+        LevelDialog(self, mode='edit', data=level, on_success=self.refresh)
+
+    def _on_delete_level(self):
+        level = self._get_selected_level()
+        if not level:
+            messagebox.showwarning('提示', '请先选择一个等级', parent=self)
+            return
+        if messagebox.askyesno('确认删除',
+                               f'确定要删除等级 "{level["level_name"]}" 吗？\n此操作不可恢复！',
+                               parent=self, icon='warning'):
+            try:
+                level_db.delete_level(level['id'])
+                messagebox.showinfo('成功', '删除成功', parent=self)
+                self.refresh()
+            except Exception as e:
+                messagebox.showerror('错误', str(e), parent=self)
 
 
 class LevelDialog(tk.Toplevel):
@@ -468,3 +601,336 @@ class ProjectDialog(tk.Toplevel):
             self.destroy()
         except Exception as e:
             messagebox.showerror('错误', str(e), parent=self)
+
+
+class LevelChangeDialog(tk.Toplevel):
+    def __init__(self, parent, project, levels, on_success=None):
+        super().__init__(parent)
+        self.parent = parent
+        self.project = project
+        self.levels = levels
+        self.on_success = on_success
+        self.carry_over_var = tk.BooleanVar(value=True)
+
+        self.title('项目组升降级')
+        self.geometry('480x420')
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+
+        self._create_widgets()
+        self._calc_preview()
+
+    def _create_widgets(self):
+        container = tk.Frame(self, bg='white')
+        container.pack(fill='both', expand=True, padx=20, pady=16)
+
+        tk.Label(container, text='项目组升降级',
+                 font=('Microsoft YaHei', 14, 'bold'),
+                 bg='white', fg='#333').pack(anchor='w')
+
+        info_frame = tk.Frame(container, bg='#f0f7ff', bd=1, relief='solid')
+        info_frame.pack(fill='x', pady=12)
+
+        info_data = [
+            ('项目组', self.project['group_name']),
+            ('当前等级', self.project['level_name']),
+            ('普通额度', f"¥{self.project['current_quota']:,.0f} (已用 ¥{self.project['used_quota']:,.0f})"),
+            ('危化品额度', f"¥{self.project['current_hazardous_quota']:,.0f} (已用 ¥{self.project['used_hazardous_quota']:,.0f})"),
+        ]
+
+        for i, (label, value) in enumerate(info_data):
+            row = tk.Frame(info_frame, bg='#f0f7ff')
+            row.pack(fill='x', padx=12, pady=6)
+            tk.Label(row, text=label + '：',
+                     font=('Microsoft YaHei', 9),
+                     bg='#f0f7ff', fg='#666').pack(side='left')
+            tk.Label(row, text=str(value),
+                     font=('Microsoft YaHei', 10),
+                     bg='#f0f7ff', fg='#333').pack(side='left')
+
+        tk.Label(container, text='选择新等级 *', font=('Microsoft YaHei', 10),
+                 bg='white', fg='#333').pack(anchor='w', pady=(4, 0))
+        self.new_level_var = tk.StringVar()
+        level_names = [l['level_name'] for l in self.levels if l['id'] != self.project['level_id']]
+        self.level_combo = ttk.Combobox(container, textvariable=self.new_level_var,
+                                        state='readonly', values=level_names)
+        self.level_combo.pack(fill='x', pady=(4, 12))
+        self.level_combo.bind('<<ComboboxSelected>>', lambda e: self._calc_preview())
+
+        tk.Label(container, text='结转方式', font=('Microsoft YaHei', 10),
+                 bg='white', fg='#333').pack(anchor='w')
+
+        carry_frame = tk.Frame(container, bg='white')
+        carry_frame.pack(fill='x', pady=(4, 0))
+
+        tk.Radiobutton(carry_frame, text='按比例结转剩余额度',
+                       variable=self.carry_over_var, value=True,
+                       bg='white', activebackground='white',
+                       font=('Microsoft YaHei', 10),
+                       command=self._calc_preview).pack(anchor='w', pady=2)
+        tk.Label(carry_frame,
+                 text='  剩余额度按原等级比例折算到新等级，累加到新等级标准额度上',
+                 font=('Microsoft YaHei', 9),
+                 bg='white', fg='#999').pack(anchor='w', padx=(20, 0))
+
+        tk.Radiobutton(carry_frame, text='清零重置',
+                       variable=self.carry_over_var, value=False,
+                       bg='white', activebackground='white',
+                       font=('Microsoft YaHei', 10),
+                       command=self._calc_preview).pack(anchor='w', pady=(8, 2))
+        tk.Label(carry_frame,
+                 text='  直接使用新等级的标准额度，已用额度清零',
+                 font=('Microsoft YaHei', 9),
+                 bg='white', fg='#999').pack(anchor='w', padx=(20, 0))
+
+        self.preview_frame = tk.Frame(container, bg='#fff7e6', bd=1, relief='solid')
+        self.preview_frame.pack(fill='x', pady=12)
+
+        tk.Label(self.preview_frame, text='变更后预览',
+                 font=('Microsoft YaHei', 10, 'bold'),
+                 bg='#fff7e6', fg='#fa8c16').pack(anchor='w', padx=12, pady=(8, 4))
+
+        self.preview_text = tk.Label(self.preview_frame, text='请选择新等级',
+                                     font=('Microsoft YaHei', 9),
+                                     bg='#fff7e6', fg='#666', justify='left')
+        self.preview_text.pack(anchor='w', padx=12, pady=(0, 8))
+
+        btn_frame = tk.Frame(self, bg='#fafafa')
+        btn_frame.pack(fill='x', side='bottom')
+
+        tk.Button(btn_frame, text='取消',
+                  font=('Microsoft YaHei', 10),
+                  bg='white', fg='#666',
+                  activebackground='#f5f5f5',
+                  relief='flat', padx=20, pady=8, cursor='hand2',
+                  command=self.destroy).pack(side='right', padx=12, pady=12)
+
+        tk.Button(btn_frame, text='确认变更',
+                  font=('Microsoft YaHei', 10),
+                  bg='#1890ff', fg='white',
+                  activebackground='#40a9ff', activeforeground='white',
+                  relief='flat', padx=20, pady=8, cursor='hand2',
+                  command=self._on_submit).pack(side='right', pady=12)
+
+    def _calc_preview(self):
+        new_level_name = self.new_level_var.get()
+        if not new_level_name:
+            self.preview_text.config(text='请选择新等级')
+            return
+
+        new_level = None
+        for l in self.levels:
+            if l['level_name'] == new_level_name:
+                new_level = l
+                break
+
+        if not new_level:
+            return
+
+        carry_over = self.carry_over_var.get()
+        remaining_quota = self.project['current_quota'] - self.project['used_quota']
+        remaining_hazardous = self.project['current_hazardous_quota'] - self.project['used_hazardous_quota']
+
+        new_quota = new_level['monthly_quota']
+        new_hazardous = new_level['hazardous_quota']
+        carry_over_amount = 0
+        carry_over_hazardous = 0
+
+        if carry_over:
+            old_monthly = self.project.get('monthly_quota', self.project['current_quota'])
+            old_hazardous_quota = self.project.get('hazardous_quota', self.project['current_hazardous_quota'])
+            
+            if old_monthly > 0 and remaining_quota > 0:
+                ratio = remaining_quota / old_monthly
+                carry_over_amount = min(remaining_quota, new_level['monthly_quota'] * ratio)
+                new_quota = new_level['monthly_quota'] + carry_over_amount
+
+            if old_hazardous_quota > 0 and remaining_hazardous > 0:
+                hazard_ratio = remaining_hazardous / old_hazardous_quota
+                carry_over_hazardous = min(remaining_hazardous, new_level['hazardous_quota'] * hazard_ratio)
+                new_hazardous = new_level['hazardous_quota'] + carry_over_hazardous
+
+        normal_preview = f"• 普通额度：¥{new_quota:,.0f} (标准 ¥{new_level['monthly_quota']:,.0f}"
+        if carry_over and carry_over_amount > 0:
+            normal_preview += f", 结转 ¥{carry_over_amount:,.0f}"
+        normal_preview += ")"
+
+        hazard_preview = f"• 危化品额度：¥{new_hazardous:,.0f} (标准 ¥{new_level['hazardous_quota']:,.0f}"
+        if carry_over and carry_over_hazardous > 0:
+            hazard_preview += f", 结转 ¥{carry_over_hazardous:,.0f}"
+        hazard_preview += ")"
+
+        preview = (f"• 新等级：{new_level_name}\n"
+                   f"{normal_preview}\n"
+                   f"{hazard_preview}\n"
+                   f"• 已用额度清零重算")
+
+        self.preview_text.config(text=preview)
+
+    def _on_submit(self):
+        new_level_name = self.new_level_var.get()
+        if not new_level_name:
+            messagebox.showerror('错误', '请选择新等级', parent=self)
+            return
+
+        new_level_id = None
+        for l in self.levels:
+            if l['level_name'] == new_level_name:
+                new_level_id = l['id']
+                break
+
+        if not new_level_id:
+            messagebox.showerror('错误', '无效的等级', parent=self)
+            return
+
+        carry_over = self.carry_over_var.get()
+        carry_text = '按比例结转' if carry_over else '清零重置'
+
+        if not messagebox.askyesno('确认变更',
+                                   f'确定要将 "{self.project["group_name"]}" '
+                                   f'从 {self.project["level_name"]} 变更为 {new_level_name} 吗？\n'
+                                   f'结转方式：{carry_text}',
+                                   parent=self, icon='question'):
+            return
+
+        try:
+            level_db.change_project_level(self.project['id'], new_level_id, carry_over)
+            messagebox.showinfo('成功', '升降级操作成功', parent=self)
+            if self.on_success:
+                self.on_success()
+            self.destroy()
+        except Exception as e:
+            messagebox.showerror('错误', str(e), parent=self)
+
+
+class ProjectDetailDialog(tk.Toplevel):
+    def __init__(self, parent, project):
+        super().__init__(parent)
+        self.parent = parent
+        self.project = project
+
+        self.title('项目组详情')
+        self.geometry('520x480')
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+
+        self._create_widgets()
+
+    def _create_widgets(self):
+        container = tk.Frame(self, bg='white')
+        container.pack(fill='both', expand=True, padx=20, pady=16)
+
+        tk.Label(container, text=self.project['group_name'],
+                 font=('Microsoft YaHei', 14, 'bold'),
+                 bg='white', fg='#333').pack(anchor='w')
+
+        tk.Label(container, text=f"等级：{self.project['level_name']}",
+                 font=('Microsoft YaHei', 10),
+                 bg='white', fg='#1890ff').pack(anchor='w', pady=(4, 12))
+
+        info_frame = tk.Frame(container, bg='#fafafa', bd=1, relief='solid')
+        info_frame.pack(fill='x')
+
+        info_data = [
+            ('负责人', self.project.get('leader') or '-'),
+            ('联系电话', self.project.get('contact') or '-'),
+            ('额度月份', self.project.get('quota_month') or '-'),
+        ]
+
+        for i, (label, value) in enumerate(info_data):
+            row = tk.Frame(info_frame, bg='#fafafa')
+            row.pack(fill='x', padx=12, pady=6)
+            tk.Label(row, text=label + '：',
+                     font=('Microsoft YaHei', 9),
+                     bg='#fafafa', fg='#666').pack(side='left')
+            tk.Label(row, text=str(value),
+                     font=('Microsoft YaHei', 10),
+                     bg='#fafafa', fg='#333').pack(side='left')
+
+        quota_frame = tk.Frame(container, bg='white')
+        quota_frame.pack(fill='x', pady=16)
+
+        tk.Label(quota_frame, text='额度使用情况',
+                 font=('Microsoft YaHei', 11, 'bold'),
+                 bg='white', fg='#333').pack(anchor='w')
+
+        normal_frame = tk.Frame(quota_frame, bg='white')
+        normal_frame.pack(fill='x', pady=(8, 4))
+
+        normal_percent = (self.project['used_quota'] / self.project['current_quota'] * 100) if self.project['current_quota'] > 0 else 0
+        tk.Label(normal_frame, text=f"普通额度：已用 ¥{self.project['used_quota']:,.0f} / ¥{self.project['current_quota']:,.0f}",
+                 font=('Microsoft YaHei', 9),
+                 bg='white', fg='#666').pack(anchor='w')
+
+        bar_bg = tk.Frame(quota_frame, bg='#f0f0f0', height=16)
+        bar_bg.pack(fill='x', pady=(0, 4))
+        bar_width = max(1, int(normal_percent * 4.8))
+        bar_color = '#52c41a' if normal_percent < 60 else '#fa8c16' if normal_percent < 80 else '#f5222d'
+        tk.Frame(bar_bg, bg=bar_color, width=bar_width, height=16).pack(side='left')
+
+        hazard_frame = tk.Frame(quota_frame, bg='white')
+        hazard_frame.pack(fill='x', pady=(12, 4))
+
+        hazard_percent = (self.project['used_hazardous_quota'] / self.project['current_hazardous_quota'] * 100) if self.project['current_hazardous_quota'] > 0 else 0
+        tk.Label(hazard_frame, text=f"危化品额度：已用 ¥{self.project['used_hazardous_quota']:,.0f} / ¥{self.project['current_hazardous_quota']:,.0f}",
+                 font=('Microsoft YaHei', 9),
+                 bg='white', fg='#666').pack(anchor='w')
+
+        bar_bg2 = tk.Frame(quota_frame, bg='#f0f0f0', height=16)
+        bar_bg2.pack(fill='x', pady=(0, 4))
+        bar_width2 = max(1, int(hazard_percent * 4.8))
+        bar_color2 = '#52c41a' if hazard_percent < 60 else '#fa8c16' if hazard_percent < 80 else '#f5222d'
+        tk.Frame(bar_bg2, bg=bar_color2, width=bar_width2, height=16).pack(side='left')
+
+        tk.Label(container, text='升降级记录',
+                 font=('Microsoft YaHei', 11, 'bold'),
+                 bg='white', fg='#333').pack(anchor='w', pady=(12, 8))
+
+        try:
+            result = level_db.get_quota_usage(self.project['id'])
+            change_logs = result['change_logs']
+        except:
+            change_logs = []
+
+        logs_frame = tk.Frame(container, bg='white')
+        logs_frame.pack(fill='both', expand=True)
+
+        columns = ['date', 'old_level', 'new_level', 'type']
+        log_tree = ttk.Treeview(logs_frame, columns=columns, show='headings', height=6)
+
+        log_tree.heading('date', text='时间')
+        log_tree.heading('old_level', text='原等级')
+        log_tree.heading('new_level', text='新等级')
+        log_tree.heading('type', text='结转方式')
+
+        log_tree.column('date', width=150, anchor='w')
+        log_tree.column('old_level', width=100, anchor='center')
+        log_tree.column('new_level', width=100, anchor='center')
+        log_tree.column('type', width=100, anchor='center')
+
+        vsb = ttk.Scrollbar(logs_frame, orient='vertical', command=log_tree.yview)
+        log_tree.configure(yscrollcommand=vsb.set)
+
+        log_tree.pack(side='left', fill='both', expand=True)
+        vsb.pack(side='right', fill='y')
+
+        for log in change_logs:
+            type_text = '按比例结转' if log['carry_over_type'] == 'proportional' else '清零重置'
+            log_tree.insert('', 'end', values=(
+                log.get('created_at', ''),
+                log.get('old_level_name') or '-',
+                log.get('new_level_name') or '-',
+                type_text
+            ))
+
+        btn_frame = tk.Frame(self, bg='#fafafa')
+        btn_frame.pack(fill='x', side='bottom')
+
+        tk.Button(btn_frame, text='关闭',
+                  font=('Microsoft YaHei', 10),
+                  bg='#1890ff', fg='white',
+                  activebackground='#40a9ff', activeforeground='white',
+                  relief='flat', padx=24, pady=8, cursor='hand2',
+                  command=self.destroy).pack(side='right', padx=12, pady=12)

@@ -4,6 +4,7 @@ from datetime import datetime
 from database import outbound as outbound_db
 from database import batch as batch_db
 from database import level as level_db
+from ui.batch_page import DistributionDialog
 
 
 class OutboundPage(ttk.Frame):
@@ -17,8 +18,10 @@ class OutboundPage(ttk.Frame):
         self.selected_batch = tk.StringVar(value='')
         self.batches = []
         self.projects = []
+        self.outbound_data_cache = {}
 
         self._create_widgets()
+        self._bind_events()
         self.refresh()
 
     def _create_widgets(self):
@@ -34,12 +37,22 @@ class OutboundPage(ttk.Frame):
                  font=('Microsoft YaHei', 12, 'bold'),
                  bg='white', fg='#333').pack(side='left')
 
-        tk.Button(header, text='+ 拆分出库',
+        btn_group = tk.Frame(header, bg='white')
+        btn_group.pack(side='right')
+
+        tk.Button(btn_group, text='+ 拆分出库',
                   font=('Microsoft YaHei', 10),
                   bg='#1890ff', fg='white',
                   activebackground='#40a9ff', activeforeground='white',
                   relief='flat', padx=16, pady=6, cursor='hand2',
-                  command=self._on_add).pack(side='right')
+                  command=self._on_add).pack(side='right', padx=(8, 0))
+
+        tk.Button(btn_group, text='分布追踪',
+                  font=('Microsoft YaHei', 10),
+                  bg='#52c41a', fg='white',
+                  activebackground='#73d13d', activeforeground='white',
+                  relief='flat', padx=12, pady=6, cursor='hand2',
+                  command=self._on_distribution).pack(side='right')
 
         search_bar = tk.Frame(card, bg='white')
         search_bar.pack(fill='x', padx=16, pady=(0, 12))
@@ -63,7 +76,7 @@ class OutboundPage(ttk.Frame):
         table_frame.pack(fill='both', expand=True, padx=16, pady=(0, 12))
 
         columns = ['reagent_name', 'quantity', 'project_name', 'receiver',
-                   'outbound_date', 'purpose', 'is_hazardous', 'action']
+                   'outbound_date', 'purpose', 'is_hazardous']
         self.tree = ttk.Treeview(table_frame, columns=columns, show='headings', height=15)
 
         self.tree.heading('reagent_name', text='试剂名称')
@@ -73,16 +86,14 @@ class OutboundPage(ttk.Frame):
         self.tree.heading('outbound_date', text='出库时间')
         self.tree.heading('purpose', text='用途')
         self.tree.heading('is_hazardous', text='危化品')
-        self.tree.heading('action', text='操作')
 
-        self.tree.column('reagent_name', width=150, anchor='w')
+        self.tree.column('reagent_name', width=180, anchor='w')
         self.tree.column('quantity', width=100, anchor='e')
-        self.tree.column('project_name', width=130, anchor='w')
+        self.tree.column('project_name', width=150, anchor='w')
         self.tree.column('receiver', width=90, anchor='w')
         self.tree.column('outbound_date', width=150, anchor='center')
-        self.tree.column('purpose', width=100, anchor='w')
+        self.tree.column('purpose', width=120, anchor='w')
         self.tree.column('is_hazardous', width=70, anchor='center')
-        self.tree.column('action', width=100, anchor='center')
 
         vsb = ttk.Scrollbar(table_frame, orient='vertical', command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
@@ -91,6 +102,11 @@ class OutboundPage(ttk.Frame):
         vsb.pack(side='right', fill='y')
 
         self.tree.tag_configure('hazard', foreground='#f5222d')
+
+        self.context_menu = tk.Menu(self.tree, tearoff=0)
+        self.context_menu.add_command(label='分布追踪', command=self._on_distribution)
+        self.context_menu.add_separator()
+        self.context_menu.add_command(label='查看批次详情', command=self._on_view_batch)
 
         pager = tk.Frame(card, bg='white')
         pager.pack(fill='x', padx=16, pady=(0, 12))
@@ -158,6 +174,43 @@ class OutboundPage(ttk.Frame):
                  font=('Microsoft YaHei', 9),
                  bg='white', fg='#666').pack()
 
+    def _bind_events(self):
+        self.tree.bind('<Double-1>', self._on_double_click)
+        self.tree.bind('<Button-3>', self._on_right_click)
+
+    def _get_selected_outbound(self):
+        selection = self.tree.selection()
+        if not selection:
+            return None
+        item_id = selection[0]
+        return self.outbound_data_cache.get(item_id)
+
+    def _on_double_click(self, event):
+        self._on_distribution()
+
+    def _on_right_click(self, event):
+        item = self.tree.identify_row(event.y)
+        if item:
+            self.tree.selection_set(item)
+            self.context_menu.post(event.x_root, event.y_root)
+
+    def _on_distribution(self):
+        outbound = self._get_selected_outbound()
+        if not outbound:
+            messagebox.showwarning('提示', '请先选择一条出库记录', parent=self)
+            return
+        DistributionDialog(self, outbound['batch_id'])
+
+    def _on_view_batch(self):
+        outbound = self._get_selected_outbound()
+        if not outbound:
+            messagebox.showwarning('提示', '请先选择一条出库记录', parent=self)
+            return
+        batch = batch_db.get_batch(outbound['batch_id'])
+        if batch:
+            from ui.batch_page import BatchDetailDialog
+            BatchDetailDialog(self, batch)
+
     def refresh(self):
         self._load_batches()
         self._load_projects()
@@ -181,22 +234,24 @@ class OutboundPage(ttk.Frame):
 
         for item in self.tree.get_children():
             self.tree.delete(item)
+        self.outbound_data_cache.clear()
 
         for row in data:
             tags = ()
             if row.get('is_hazardous'):
                 tags = ('hazard',)
 
-            self.tree.insert('', 'end', values=(
-                f"{row['reagent_name']}\n({row['batch_no']})",
+            item_id = self.tree.insert('', 'end', values=(
+                f"{row['reagent_name']} ({row['batch_no']})",
                 f"{row['quantity']} {row['unit']}",
                 row.get('project_name') or '未指定',
                 row['receiver'],
                 row['outbound_date'],
                 row.get('purpose') or '-',
-                '是' if row.get('is_hazardous') else '否',
-                '分布追踪'
+                '是' if row.get('is_hazardous') else '否'
             ), tags=tags)
+
+            self.outbound_data_cache[item_id] = row
 
         self.page_info.config(text=f'共 {self.total} 条记录')
         self.page_label.config(text=f'第 {self.current_page} 页')

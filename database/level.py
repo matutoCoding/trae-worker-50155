@@ -175,14 +175,21 @@ def change_project_level(project_id, new_level_id, carry_over):
     remaining_hazardous = project['current_hazardous_quota'] - project['used_hazardous_quota']
 
     carry_over_amount = 0
+    carry_over_hazardous_amount = 0
     carry_over_type = 'proportional' if carry_over else 'reset'
     new_quota = new_level['monthly_quota']
     new_hazardous_quota = new_level['hazardous_quota']
 
-    if carry_over and old_level and old_level['monthly_quota'] > 0:
-        ratio = remaining_quota / old_level['monthly_quota']
-        carry_over_amount = min(remaining_quota, new_level['monthly_quota'] * ratio)
-        new_quota = new_level['monthly_quota'] + carry_over_amount
+    if carry_over and old_level:
+        if old_level['monthly_quota'] > 0:
+            ratio = remaining_quota / old_level['monthly_quota']
+            carry_over_amount = min(remaining_quota, new_level['monthly_quota'] * ratio)
+            new_quota = new_level['monthly_quota'] + carry_over_amount
+
+        if old_level['hazardous_quota'] > 0 and remaining_hazardous > 0:
+            hazard_ratio = remaining_hazardous / old_level['hazardous_quota']
+            carry_over_hazardous_amount = min(remaining_hazardous, new_level['hazardous_quota'] * hazard_ratio)
+            new_hazardous_quota = new_level['hazardous_quota'] + carry_over_hazardous_amount
 
     cursor.execute('''
         UPDATE project_groups SET
@@ -208,7 +215,7 @@ def change_project_level(project_id, new_level_id, carry_over):
         new_quota,
         carry_over_type,
         carry_over_amount,
-        '按比例结转剩余额度' if carry_over else '升降级清零'
+        f'按比例结转剩余额度（普通: {carry_over_amount:,.0f}, 危化品: {carry_over_hazardous_amount:,.0f}）' if carry_over else '升降级清零'
     ))
 
     conn.commit()
@@ -220,6 +227,35 @@ def change_project_level(project_id, new_level_id, carry_over):
     )
 
     return True
+
+
+def delete_project(project_id):
+    """删除项目组"""
+    conn = get_conn()
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT group_name FROM project_groups WHERE id = ?', (project_id,))
+    project = cursor.fetchone()
+    if not project:
+        raise Exception('项目组不存在')
+
+    cursor.execute('SELECT COUNT(*) as cnt FROM outbound_records WHERE project_id = ?', (project_id,))
+    outbound_count = cursor.fetchone()['cnt']
+    if outbound_count > 0:
+        raise Exception(f'该项目组有关联的出库记录（{outbound_count}条），无法删除')
+
+    cursor.execute('SELECT COUNT(*) as cnt FROM hazardous_qualifications WHERE project_id = ?', (project_id,))
+    qual_count = cursor.fetchone()['cnt']
+    if qual_count > 0:
+        raise Exception(f'该项目组有关联的危化品资质（{qual_count}条），无法删除')
+
+    cursor.execute('DELETE FROM level_change_logs WHERE project_id = ?', (project_id,))
+    cursor.execute('DELETE FROM project_groups WHERE id = ?', (project_id,))
+    conn.commit()
+
+    add_operation_log('等级额度', '删除项目组', f'删除项目组: {project["group_name"]}')
+
+    return cursor.rowcount
 
 
 def get_quota_usage(project_id):

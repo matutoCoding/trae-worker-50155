@@ -20,9 +20,15 @@ class MainWindow:
         self.root.minsize(1024, 680)
 
         self._setup_style()
-        self._create_widgets()
+        
+        try:
+            init_db()
+        except Exception as e:
+            messagebox.showerror('初始化失败', f'数据库初始化失败：{e}', parent=self.root)
+            self.root.destroy()
+            return
 
-        init_db()
+        self._create_widgets()
 
         self.root.protocol('WM_DELETE_WINDOW', self._on_close)
 

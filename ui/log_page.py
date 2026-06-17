@@ -25,8 +25,10 @@ class LogPage(ttk.Frame):
         self.qual_status = tk.StringVar(value='')
 
         self.projects = []
+        self.qual_data_cache = {}
 
         self._create_widgets()
+        self._bind_events()
         self.refresh()
 
     def _create_widgets(self):
@@ -189,15 +191,36 @@ class LogPage(ttk.Frame):
                  font=('Microsoft YaHei', 12, 'bold'),
                  bg='white', fg='#333').pack(side='left')
 
-        tk.Button(header, text='+ 新增资质',
+        btn_group = tk.Frame(header, bg='white')
+        btn_group.pack(side='right')
+
+        tk.Button(btn_group, text='+ 新增资质',
                   font=('Microsoft YaHei', 10),
                   bg='#1890ff', fg='white',
                   activebackground='#40a9ff', activeforeground='white',
                   relief='flat', padx=16, pady=6, cursor='hand2',
-                  command=self._on_add_qual).pack(side='right')
+                  command=self._on_add_qual).pack(side='right', padx=(8, 0))
+
+        tk.Button(btn_group, text='删除',
+                  font=('Microsoft YaHei', 10),
+                  bg='#ff4d4f', fg='white',
+                  activebackground='#ff7875', activeforeground='white',
+                  relief='flat', padx=12, pady=6, cursor='hand2',
+                  command=self._on_delete_qual).pack(side='right', padx=(0, 8))
+
+        tk.Button(btn_group, text='编辑',
+                  font=('Microsoft YaHei', 10),
+                  bg='#fa8c16', fg='white',
+                  activebackground='#ffa940', activeforeground='white',
+                  relief='flat', padx=12, pady=6, cursor='hand2',
+                  command=self._on_edit_qual).pack(side='right')
+
+        tk.Label(self.qualification_content, text='（双击行可编辑，右键可查看更多操作）',
+                 font=('Microsoft YaHei', 9),
+                 bg='white', fg='#999').pack(anchor='w', pady=(8, 0))
 
         search_bar = tk.Frame(self.qualification_content, bg='white')
-        search_bar.pack(fill='x', pady=12)
+        search_bar.pack(fill='x', pady=8)
 
         tk.Entry(search_bar, textvariable=self.qual_keyword,
                  font=('Microsoft YaHei', 10),
@@ -220,7 +243,7 @@ class LogPage(ttk.Frame):
         table_frame.pack(fill='both', expand=True)
 
         columns = ['qual_type', 'cert_no', 'holder', 'project',
-                   'expiry', 'status', 'action']
+                   'expiry', 'status']
         self.qual_tree = ttk.Treeview(table_frame, columns=columns,
                                        show='headings', height=12)
 
@@ -230,15 +253,13 @@ class LogPage(ttk.Frame):
         self.qual_tree.heading('project', text='所属项目')
         self.qual_tree.heading('expiry', text='有效期')
         self.qual_tree.heading('status', text='状态')
-        self.qual_tree.heading('action', text='操作')
 
-        self.qual_tree.column('qual_type', width=150, anchor='w')
-        self.qual_tree.column('cert_no', width=150, anchor='w')
+        self.qual_tree.column('qual_type', width=180, anchor='w')
+        self.qual_tree.column('cert_no', width=160, anchor='w')
         self.qual_tree.column('holder', width=100, anchor='w')
-        self.qual_tree.column('project', width=130, anchor='w')
-        self.qual_tree.column('expiry', width=130, anchor='center')
+        self.qual_tree.column('project', width=150, anchor='w')
+        self.qual_tree.column('expiry', width=140, anchor='center')
         self.qual_tree.column('status', width=80, anchor='center')
-        self.qual_tree.column('action', width=120, anchor='center')
 
         vsb = ttk.Scrollbar(table_frame, orient='vertical',
                             command=self.qual_tree.yview)
@@ -249,6 +270,11 @@ class LogPage(ttk.Frame):
 
         self.qual_tree.tag_configure('expired', foreground='#f5222d')
         self.qual_tree.tag_configure('warning', foreground='#fa8c16')
+
+        self.qual_context_menu = tk.Menu(self.qual_tree, tearoff=0)
+        self.qual_context_menu.add_command(label='编辑', command=self._on_edit_qual)
+        self.qual_context_menu.add_separator()
+        self.qual_context_menu.add_command(label='删除', command=self._on_delete_qual)
 
         pager = tk.Frame(self.qualification_content, bg='white')
         pager.pack(fill='x', pady=(12, 0))
@@ -289,6 +315,50 @@ class LogPage(ttk.Frame):
             self.op_tab.config(font=('Microsoft YaHei', 11), fg='#666')
             self.operation_content.pack_forget()
             self.qualification_content.pack(fill='both', expand=True, padx=16, pady=(0, 12))
+
+    def _bind_events(self):
+        self.qual_tree.bind('<Double-1>', self._on_qual_double_click)
+        self.qual_tree.bind('<Button-3>', self._on_qual_right_click)
+
+    def _get_selected_qual(self):
+        selection = self.qual_tree.selection()
+        if not selection:
+            return None
+        item_id = selection[0]
+        return self.qual_data_cache.get(item_id)
+
+    def _on_qual_double_click(self, event):
+        self._on_edit_qual()
+
+    def _on_qual_right_click(self, event):
+        item = self.qual_tree.identify_row(event.y)
+        if item:
+            self.qual_tree.selection_set(item)
+            self.qual_context_menu.post(event.x_root, event.y_root)
+
+    def _on_edit_qual(self):
+        qual = self._get_selected_qual()
+        if not qual:
+            messagebox.showwarning('提示', '请先选择一条资质记录', parent=self)
+            return
+        QualificationDialog(self, projects=self.projects, mode='edit',
+                            data=qual, on_success=self.refresh)
+
+    def _on_delete_qual(self):
+        qual = self._get_selected_qual()
+        if not qual:
+            messagebox.showwarning('提示', '请先选择一条资质记录', parent=self)
+            return
+        holder = qual.get('holder_name') or qual.get('certificate_no')
+        if messagebox.askyesno('确认删除',
+                               f'确定要删除资质 "{qual["qualification_type"]} - {holder}" 吗？\n此操作不可恢复！',
+                               parent=self, icon='warning'):
+            try:
+                qual_db.delete_qualification(qual['id'])
+                messagebox.showinfo('成功', '删除成功', parent=self)
+                self.refresh()
+            except Exception as e:
+                messagebox.showerror('错误', str(e), parent=self)
 
     def refresh(self):
         self._load_logs()
@@ -344,6 +414,7 @@ class LogPage(ttk.Frame):
 
         for item in self.qual_tree.get_children():
             self.qual_tree.delete(item)
+        self.qual_data_cache.clear()
 
         today = date.today()
         valid_count = 0
@@ -388,15 +459,16 @@ class LogPage(ttk.Frame):
             elif is_soon:
                 expiry_text += ' (即将过期)'
 
-            self.qual_tree.insert('', 'end', values=(
+            item_id = self.qual_tree.insert('', 'end', values=(
                 row['qualification_type'],
                 row['certificate_no'],
                 row.get('holder_name') or '-',
                 row.get('project_name') or '-',
                 expiry_text,
-                status_text,
-                '编辑  删除'
+                status_text
             ), tags=tags)
+
+            self.qual_data_cache[item_id] = row
 
         self.qual_page_info.config(text=f'共 {self.qual_total} 条记录')
         self.qual_page_label.config(text=f'第 {self.qual_page} 页')
