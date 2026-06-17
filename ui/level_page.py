@@ -1120,61 +1120,141 @@ class ProjectDetailDialog(tk.Toplevel):
         from database import outbound as outbound_db
 
         month = self.selected_month.get()
-        result = outbound_db.get_project_monthly_outbound(self.project['id'], month)
+        result = outbound_db.get_project_monthly_settlement(self.project['id'], month)
 
-        normal_total = result['normal_total']
-        hazard_total = result['hazard_total']
-        normal_quota = self.project['current_quota']
-        hazard_quota = self.project['current_hazardous_quota']
-        used_normal = self.project['used_quota']
-        used_hazard = self.project['used_hazardous_quota']
-        remain_normal = normal_quota - used_normal
-        remain_hazard = hazard_quota - used_hazard
+        if not result:
+            tk.Label(self.ledger_content, text='暂无数据',
+                     font=('Microsoft YaHei', 11),
+                     bg='white', fg='#999').pack(pady=30)
+            return
 
-        stats_wrap = tk.Frame(self.ledger_content, bg='white')
-        stats_wrap.pack(fill='x', pady=(0, 8))
+        normal_begin = result['begin_normal_quota']
+        hazard_begin = result['begin_hazard_quota']
+        normal_out = result['normal_outbound']
+        hazard_out = result['hazard_outbound']
+        normal_adj = result['adjust_normal_delta']
+        hazard_adj = result['adjust_hazard_delta']
+        normal_end = result['end_normal_quota']
+        hazard_end = result['end_hazard_quota']
+        normal_remain = result['normal_remaining']
+        hazard_remain = result['hazard_remaining']
+        adj_records = result['adjust_records']
 
-        left_col = tk.Frame(stats_wrap, bg='#f0f7ff', bd=1, relief='solid')
-        left_col.pack(side='left', fill='x', expand=True, padx=(0, 6))
-        tk.Label(left_col, text='普通试剂',
-                 font=('Microsoft YaHei', 9, 'bold'),
+        title_bar = tk.Frame(self.ledger_content, bg='white')
+        title_bar.pack(fill='x', pady=(0, 8))
+        tk.Label(title_bar, text=f'{month} 月度结算',
+                 font=('Microsoft YaHei', 12, 'bold'),
+                 bg='white', fg='#333').pack(side='left')
+
+        if result['is_current_month']:
+            tk.Label(title_bar, text='（本月进行中，月末余额按当前最新状态计算）',
+                     font=('Microsoft YaHei', 9),
+                     bg='white', fg='#999').pack(side='left', padx=(10, 0))
+
+        # 结算汇总 - 普通试剂
+        box1 = tk.Frame(self.ledger_content, bg='#f0f7ff', bd=1, relief='solid')
+        box1.pack(fill='x', pady=(0, 6))
+        tk.Label(box1, text='普通试剂结算',
+                 font=('Microsoft YaHei', 10, 'bold'),
                  bg='#f0f7ff', fg='#1890ff').pack(anchor='w', padx=10, pady=(6, 2))
-        tk.Label(left_col,
-                 text=f"本月出库：¥{normal_total:,.0f}　累计占用：¥{used_normal:,.0f}　剩余：¥{remain_normal:,.0f}",
+        r1 = tk.Frame(box1, bg='#f0f7ff')
+        r1.pack(fill='x', padx=10, pady=(0, 4))
+        for txt, val in [
+            (f'期初额度 ¥{normal_begin:,.0f}', None),
+            (f'本月占用 ¥{normal_out:,.0f}', None),
+        ]:
+            tk.Label(r1, text=txt, font=('Microsoft YaHei', 9),
+                     bg='#f0f7ff', fg='#333').pack(side='left', padx=(0, 16))
+        adj_sign_n = '+' if normal_adj >= 0 else ''
+        tk.Label(r1, text=f'调整净额 {adj_sign_n}¥{normal_adj:,.0f}',
                  font=('Microsoft YaHei', 9),
-                 bg='#f0f7ff', fg='#333').pack(anchor='w', padx=10, pady=(0, 6))
+                 bg='#f0f7ff', fg='#1890ff' if normal_adj >= 0 else '#f5222d').pack(side='left', padx=(0, 16))
+        r2 = tk.Frame(box1, bg='#f0f7ff')
+        r2.pack(fill='x', padx=10, pady=(0, 6))
+        tk.Label(r2, text=f'月末额度 ¥{normal_end:,.0f}',
+                 font=('Microsoft YaHei', 10, 'bold'),
+                 bg='#f0f7ff', fg='#1890ff').pack(side='left', padx=(0, 20))
+        tk.Label(r2, text=f'月末剩余 ¥{normal_remain:,.0f}',
+                 font=('Microsoft YaHei', 10, 'bold'),
+                 bg='#f0f7ff', fg='#52c41a').pack(side='left')
 
-        right_col = tk.Frame(stats_wrap, bg='#fff1f0', bd=1, relief='solid')
-        right_col.pack(side='right', fill='x', expand=True, padx=(6, 0))
-        tk.Label(right_col, text='危化品',
-                 font=('Microsoft YaHei', 9, 'bold'),
+        # 结算汇总 - 危化品
+        box2 = tk.Frame(self.ledger_content, bg='#fff1f0', bd=1, relief='solid')
+        box2.pack(fill='x', pady=(0, 6))
+        tk.Label(box2, text='危化品结算',
+                 font=('Microsoft YaHei', 10, 'bold'),
                  bg='#fff1f0', fg='#f5222d').pack(anchor='w', padx=10, pady=(6, 2))
-        tk.Label(right_col,
-                 text=f"本月出库：¥{hazard_total:,.0f}　累计占用：¥{used_hazard:,.0f}　剩余：¥{remain_hazard:,.0f}",
+        r3 = tk.Frame(box2, bg='#fff1f0')
+        r3.pack(fill='x', padx=10, pady=(0, 4))
+        for txt in [
+            f'期初额度 ¥{hazard_begin:,.0f}',
+            f'本月占用 ¥{hazard_out:,.0f}',
+        ]:
+            tk.Label(r3, text=txt, font=('Microsoft YaHei', 9),
+                     bg='#fff1f0', fg='#333').pack(side='left', padx=(0, 16))
+        adj_sign_h = '+' if hazard_adj >= 0 else ''
+        tk.Label(r3, text=f'调整净额 {adj_sign_h}¥{hazard_adj:,.0f}',
                  font=('Microsoft YaHei', 9),
-                 bg='#fff1f0', fg='#333').pack(anchor='w', padx=10, pady=(0, 6))
+                 bg='#fff1f0', fg='#1890ff' if hazard_adj >= 0 else '#f5222d').pack(side='left', padx=(0, 16))
+        r4 = tk.Frame(box2, bg='#fff1f0')
+        r4.pack(fill='x', padx=10, pady=(0, 6))
+        tk.Label(r4, text=f'月末额度 ¥{hazard_end:,.0f}',
+                 font=('Microsoft YaHei', 10, 'bold'),
+                 bg='#fff1f0', fg='#f5222d').pack(side='left', padx=(0, 20))
+        tk.Label(r4, text=f'月末剩余 ¥{hazard_remain:,.0f}',
+                 font=('Microsoft YaHei', 10, 'bold'),
+                 bg='#fff1f0', fg='#52c41a').pack(side='left')
+
+        # 调整记录（如有）
+        if adj_records:
+            tk.Label(self.ledger_content, text=f'本月调整记录（{len(adj_records)} 条）',
+                     font=('Microsoft YaHei', 10, 'bold'),
+                     bg='white', fg='#333').pack(anchor='w', pady=(4, 4))
+            adj_cols = ['time', 'old', 'new', 'type', 'quota']
+            adj_tree = ttk.Treeview(self.ledger_content, columns=adj_cols,
+                                    show='headings', height=min(4, len(adj_records)))
+            for c, t, w in [('time', '时间', 130), ('old', '原等级', 70),
+                            ('new', '新等级', 70), ('type', '结转方式', 80),
+                            ('quota', '额度变化', 340)]:
+                adj_tree.heading(c, text=t)
+                adj_tree.column(c, width=w, anchor='w' if c in ('time', 'quota') else 'center')
+            adj_tree.pack(fill='x', pady=(0, 6))
+            for rec in adj_records:
+                carry_text = '按比例结转' if rec.get('carry_over_type') == 'proportional' else '清零重置'
+                parts = []
+                if rec.get('old_quota') is not None and rec.get('new_quota') is not None:
+                    d = rec['new_quota'] - rec['old_quota']
+                    s = '+' if d >= 0 else ''
+                    parts.append(f"普通 ¥{rec['old_quota']:,.0f}→¥{rec['new_quota']:,.0f}({s}¥{d:,.0f})")
+                if rec.get('old_hazardous_quota') is not None and rec.get('new_hazardous_quota') is not None:
+                    hd = rec['new_hazardous_quota'] - rec['old_hazardous_quota']
+                    hs = '+' if hd >= 0 else ''
+                    parts.append(f"危化 ¥{rec['old_hazardous_quota']:,.0f}→¥{rec['new_hazardous_quota']:,.0f}({hs}¥{hd:,.0f})")
+                adj_tree.insert('', 'end', values=(
+                    rec.get('created_at', '')[:19],
+                    rec.get('old_level_name') or '-',
+                    rec.get('new_level_name') or '-',
+                    carry_text,
+                    '；'.join(parts),
+                ))
 
         tk.Label(self.ledger_content, text='普通试剂出库明细',
                  font=('Microsoft YaHei', 10, 'bold'),
                  bg='white', fg='#333').pack(anchor='w', pady=(4, 4))
 
         cols = ['date', 'reagent', 'batch_no', 'quantity', 'receiver', 'purpose']
-        n_tree = ttk.Treeview(self.ledger_content, columns=cols, show='headings', height=6)
+        n_tree = ttk.Treeview(self.ledger_content, columns=cols, show='headings', height=4)
         for c, t, w, a in [
             ('date', '时间', 120, 'w'),
             ('reagent', '试剂', 150, 'w'),
             ('batch_no', '批号', 110, 'w'),
             ('quantity', '数量', 80, 'e'),
             ('receiver', '领取人', 80, 'w'),
-            ('purpose', '用途', 180, 'w'),
+            ('purpose', '用途', 220, 'w'),
         ]:
             n_tree.heading(c, text=t)
             n_tree.column(c, width=w, anchor=a)
-        n_vsb = ttk.Scrollbar(self.ledger_content, orient='vertical', command=n_tree.yview)
-        n_tree.configure(yscrollcommand=n_vsb.set)
-
-        n_tree.pack(side='top', fill='x', expand=False)
-        n_vsb.place(relx=1.0, rely=0.1, anchor='ne')
+        n_tree.pack(fill='x', pady=(0, 4))
 
         for r in result['normal_records']:
             n_tree.insert('', 'end', values=(
@@ -1185,27 +1265,26 @@ class ProjectDetailDialog(tk.Toplevel):
                 r.get('receiver', '') or '-',
                 r.get('purpose', '') or '-',
             ))
+        if not result['normal_records']:
+            n_tree.insert('', 'end', values=('-', '本月无普通试剂出库', '-', '-', '-', '-'))
 
         tk.Label(self.ledger_content, text='危化品出库明细',
                  font=('Microsoft YaHei', 10, 'bold'),
-                 bg='white', fg='#333').pack(anchor='w', pady=(10, 4))
+                 bg='white', fg='#333').pack(anchor='w', pady=(6, 4))
 
-        h_tree = ttk.Treeview(self.ledger_content, columns=cols, show='headings', height=6)
+        h_tree = ttk.Treeview(self.ledger_content, columns=cols, show='headings', height=4)
         for c, t, w, a in [
             ('date', '时间', 120, 'w'),
             ('reagent', '试剂', 150, 'w'),
             ('batch_no', '批号', 110, 'w'),
             ('quantity', '数量', 80, 'e'),
             ('receiver', '领取人', 80, 'w'),
-            ('purpose', '用途', 180, 'w'),
+            ('purpose', '用途', 220, 'w'),
         ]:
             h_tree.heading(c, text=t)
             h_tree.column(c, width=w, anchor=a)
         h_tree.tag_configure('hazard', foreground='#f5222d')
-        h_vsb = ttk.Scrollbar(self.ledger_content, orient='vertical', command=h_tree.yview)
-        h_tree.configure(yscrollcommand=h_vsb.set)
-
-        h_tree.pack(side='top', fill='x', expand=False)
+        h_tree.pack(fill='x', pady=(0, 6))
 
         for r in result['hazard_records']:
             h_tree.insert('', 'end', values=(
@@ -1216,3 +1295,5 @@ class ProjectDetailDialog(tk.Toplevel):
                 r.get('receiver', '') or '-',
                 r.get('purpose', '') or '-',
             ), tags=('hazard',))
+        if not result['hazard_records']:
+            h_tree.insert('', 'end', values=('-', '本月无危化品出库', '-', '-', '-', '-'))

@@ -367,6 +367,9 @@ class BatchPage(ttk.Frame):
             self._last_warn = None
             self.tab_warn_label_var.set('预警提醒')
 
+        if getattr(self, '_current_main_tab', 'list') == 'warn':
+            self._refresh_warn_tab()
+
     def _on_search(self):
         self.current_page = 1
         self.refresh()
@@ -512,12 +515,20 @@ class BatchPage(ttk.Frame):
         self._refresh_warn_tab()
 
     def _refresh_warn_tab(self):
-        w = getattr(self, '_last_warn', None)
-        if w is None:
-            try:
-                w = batch_db.get_warning_batches()
-            except Exception:
-                w = {'expired': [], 'expiring': [], 'low_stock': [], 'total_warning': 0}
+        try:
+            w = batch_db.get_warning_batches()
+            self._last_warn = w
+            total_w = w['total_warning']
+            if total_w > 0:
+                self.tab_warn_label_var.set(f'预警提醒 ({total_w})')
+            else:
+                self.tab_warn_label_var.set('预警提醒')
+        except Exception:
+            w = getattr(self, '_last_warn', None)
+            if w is None:
+                w = {'expired': [], 'expiring': [], 'low_stock': [],
+                     'total_warning': 0, 'expired_count': 0,
+                     'expiring_count': 0, 'low_stock_count': 0}
 
         self.warn_stat_labels['expired'].config(text=str(w.get('expired_count', 0)))
         self.warn_stat_labels['expiring'].config(text=str(w.get('expiring_count', 0)))

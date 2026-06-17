@@ -158,6 +158,49 @@ def _migrate_db(conn):
         cursor.execute('ALTER TABLE level_change_logs ADD COLUMN carry_over_hazardous_amount REAL DEFAULT 0')
     except Exception:
         pass
+    try:
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS outbound_approvals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                batch_id INTEGER NOT NULL,
+                reagent_name TEXT,
+                batch_no TEXT,
+                quantity REAL NOT NULL,
+                unit TEXT,
+                project_id INTEGER NOT NULL,
+                project_name TEXT,
+                receiver TEXT,
+                outbound_date TEXT,
+                purpose TEXT,
+                remark TEXT,
+                is_hazardous INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'pending',
+                requested_amount REAL DEFAULT 0,
+                remaining_quota REAL DEFAULT 0,
+                quota_shortage REAL DEFAULT 0,
+                applicant TEXT,
+                approval_note TEXT,
+                approved_by TEXT,
+                approved_at TEXT,
+                created_at TEXT DEFAULT (datetime('now', 'localtime')),
+                FOREIGN KEY (batch_id) REFERENCES reagent_batches(id),
+                FOREIGN KEY (project_id) REFERENCES project_groups(id)
+            )
+        ''')
+    except Exception:
+        pass
+    try:
+        cursor.execute('ALTER TABLE outbound_approvals ADD COLUMN approval_note TEXT')
+    except Exception:
+        pass
+    try:
+        cursor.execute('ALTER TABLE outbound_approvals ADD COLUMN approved_by TEXT')
+    except Exception:
+        pass
+    try:
+        cursor.execute('ALTER TABLE outbound_approvals ADD COLUMN approved_at TEXT')
+    except Exception:
+        pass
     conn.commit()
 
 

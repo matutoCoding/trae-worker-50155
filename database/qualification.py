@@ -185,7 +185,13 @@ def check_project_hazardous_valid(project_id):
     rows = cursor.fetchall()
 
     if not rows:
-        return {'has_qual': False, 'reason': '该项目组未登记危化品资质，请先在「变更留痕-危化品资质」中添加', 'qual': None}
+        return {
+            'has_qual': False,
+            'error_type': 'no_registration',
+            'title': '未登记危化品资质',
+            'reason': '该项目组尚未在系统中登记任何危化品资质，暂不允许出库危化品。\n\n请先前往「变更留痕 → 危化品资质」页面完成资质登记后再操作。',
+            'qual': None,
+        }
 
     from datetime import date as _date, datetime as _dt
     today = _date.today()
@@ -198,51 +204,99 @@ def check_project_hazardous_valid(project_id):
         status = r['status']
         is_expired = False
         is_soon = False
+        exp_date_obj = None
         if r['expiry_date']:
             try:
-                exp = _dt.strptime(r['expiry_date'], '%Y-%m-%d').date()
-                if exp < today:
+                exp_date_obj = _dt.strptime(r['expiry_date'], '%Y-%m-%d').date()
+                if exp_date_obj < today:
                     is_expired = True
-                elif (exp - today).days < 30:
+                elif (exp_date_obj - today).days < 30:
                     is_soon = True
             except Exception:
                 pass
+        r['_exp_date_obj'] = exp_date_obj
 
-        effective_status = 'expired' if (is_expired or status == 'expired') else ('valid' if status == 'valid' else status)
+        if is_expired:
+            effective_status = 'expired'
+        elif status == 'expired':
+            effective_status = 'expired'
+        elif status == 'valid':
+            effective_status = 'valid'
+        else:
+            effective_status = status
 
-        if effective_status == 'valid':
+        if effective_status == 'valid' and not is_expired:
             if not best_qual or is_soon:
                 best_qual = r
                 best_status = 'soon' if is_soon else 'valid'
                 if best_status == 'valid':
                     break
-        elif effective_status != 'expired':
-            if not best_qual:
-                best_qual = r
-                best_status = effective_status
+        elif effective_status == 'expired':
+            if not best_qual or best_status != 'soon':
+                if best_status != 'valid':
+                    best_qual = r
+                    best_status = 'expired'
+        elif not best_qual:
+            best_qual = r
+            best_status = effective_status
 
     if best_status == 'valid':
         return {'has_qual': True, 'reason': None, 'qual': best_qual}
 
     if best_status == 'soon':
         days = None
-        if best_qual and best_qual['expiry_date']:
-            try:
-                exp = _dt.strptime(best_qual['expiry_date'], '%Y-%m-%d').date()
-                days = (exp - today).days
-            except Exception:
-                pass
-        msg = '该项目组危化品资质即将过期'
+        exp_date = None
+        cert_no = None
+        if best_qual:
+            exp_date = best_qual.get('expiry_date')
+            cert_no = best_qual.get('certificate_no')
+            if best_qual.get('_exp_date_obj'):
+                days = (best_qual['_exp_date_obj'] - today).days
+        msg_parts = ['该项目组危化品资质即将到期']
         if days is not None:
-            msg += f'（剩余 {days} 天，至 {best_qual["expiry_date"]}）'
-        msg += '，请尽快办理续期'
+            msg_parts.append(f'（剩余 {days} 天）')
+        if exp_date:
+            msg_parts.append(f'，有效期至 {exp_date}')
+        if cert_no:
+            msg_parts.append(f'（证书编号：{cert_no}）')
+        msg_parts.append('\n请尽快联系相关部门办理续期手续。')
+        msg = ''.join(msg_parts)
         return {'has_qual': True, 'reason': msg, 'qual': best_qual, 'warning': True}
 
-    if best_qual and (best_qual['status'] == 'expired' or best_qual['expiry_date']):
-        reason = f"该项目组危化品资质已过期（有效期至 {best_qual['expiry_date']}），请续期后再出库危化品"
-        return {'has_qual': False, 'reason': reason, 'qual': best_qual}
+    if best_status == 'expired' and best_qual:
+        exp_date = best_qual.get('expiry_date') or '-'
+        cert_no = best_qual.get('certificate_no') or '-'
+        qual_type = best_qual.get('qualification_type') or '危化品资质'
+        expired_days = None
+        if best_qual.get('_exp_date_obj'):
+            expired_days = (today - best_qual['_exp_date_obj']).days
+        msg_parts = [f'该项目组「{qual_type}」已过期，不允许出库危化品。']
+        msg_parts.append(f'\n\n证书编号：{cert_no}')
+        msg_parts.append(f'\n有效期至：{exp_date}')
+        if expired_days is not None:
+            msg_parts.append(f'\n已过期：{expired_days} 天')
+        msg_parts.append('\n\n下一步操作：请立即联系相关人员办理资质续期，待续期成功后再发起出库。')
+        return {
+            'has_qual': False,
+            'error_type': 'expired',
+            'title': '危化品资质已过期',
+            'reason': ''.join(msg_parts),
+            'qual': best_qual,
+        }
 
-    if best_qual and best_qual['status'] == 'pending':
-        return {'has_qual': False, 'reason': '该项目组危化品资质状态为待审批，暂不允许出库危化品', 'qual': best_qual}
+    if best_qual and best_qual.get('status') == 'pending':
+        return {
+            'has_qual': False,
+            'error_type': 'pending',
+            'title': '危化品资质待审批',
+            'reason': '该项目组危化品资质当前为「待审批」状态，审批通过前暂不允许出库危化品。\n请联系管理员完成资质审批后再操作。',
+            'qual': best_qual,
+        }
 
-    return {'has_qual': False, 'reason': '该项目组无有效危化品资质，暂不允许出库危化品', 'qual': best_qual}
+    return {
+        'has_qual': False,
+        'error_type': 'no_valid',
+        'title': '无有效危化品资质',
+        'reason': '该项目组当前无有效的危化品资质，暂不允许出库危化品。\n请前往「变更留痕 → 危化品资质」页面核对并办理。',
+        'qual': best_qual,
+    }

@@ -487,15 +487,53 @@ class OutboundDialog(tk.Toplevel):
                 qual_result = {'has_qual': True, 'reason': None}
 
             if not qual_result.get('has_qual'):
+                title = qual_result.get('title') or '危化品资质校验失败'
                 msg = qual_result.get('reason') or '该项目组无有效危化品资质'
-                messagebox.showerror('危化品资质校验失败', msg, parent=self)
+                messagebox.showerror(title, msg, parent=self)
                 return
 
             if qual_result.get('warning') and qual_result.get('reason'):
-                if not messagebox.askyesno('资质即将过期',
+                if not messagebox.askyesno('资质即将到期',
                                            f"{qual_result['reason']}\n\n是否仍然继续出库？",
                                            parent=self, icon='warning'):
                     return
+
+        overflow = outbound_db.check_quota_overflow(project_id, self.selected_batch_data['id'], quantity)
+        if overflow.get('overflow') and overflow.get('type') != 'stock':
+            type_label = '危化品额度' if overflow['type'] == 'hazard_quota' else '普通试剂额度'
+            msg = (
+                f"{type_label}不足！\n\n"
+                f"申请数量：{quantity} {overflow['batch']['unit']}\n"
+                f"剩余额度：{overflow['remaining']:.1f} {overflow['batch']['unit']}\n"
+                f"超出缺口：{overflow['shortage']:.1f} {overflow['batch']['unit']}\n\n"
+                f"是否提交为待审批记录，等待管理员审批？\n"
+                f"（审批通过前不会扣库存和占额度）"
+            )
+            if not messagebox.askyesno(f'{type_label}不足 - 提交审批', msg,
+                                       parent=self, icon='warning'):
+                return
+            try:
+                outbound_db.create_outbound_approval({
+                    'batch_id': self.selected_batch_data['id'],
+                    'project_id': project_id,
+                    'quantity': quantity,
+                    'receiver': self.entries['receiver'].get().strip(),
+                    'outbound_date': self.entries['outbound_date'].get().strip(),
+                    'purpose': self.entries['purpose'].get().strip() or None,
+                    'remark': self.entries['remark'].get('1.0', 'end').strip() or None,
+                    'applicant': self.entries['receiver'].get().strip(),
+                })
+                messagebox.showinfo('已提交审批',
+                                    f'{type_label}超限申请已提交，待审批通过后将自动扣库存和额度。\n'
+                                    f'您可前往「变更留痕 → 出库审批」查看进度。',
+                                    parent=self)
+                if self.on_success:
+                    self.on_success()
+                self.destroy()
+                return
+            except Exception as e:
+                messagebox.showerror('提交失败', str(e), parent=self)
+                return
 
         data = {
             'batch_id': self.selected_batch_data['id'],
